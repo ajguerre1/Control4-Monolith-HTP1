@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(luajit:*)",
+      "Bash(cd:*)",
+      "Bash(powershell:*)",
+      "Bash(python:*)"
+    ]
+  }
+}

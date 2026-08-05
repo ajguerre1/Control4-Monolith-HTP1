@@ -30,8 +30,12 @@ Durable knowledge goes to the memory CLI at scope `project:control4-ha`. Run `me
 ## Environment
 
 Control4 DriverWorks runs **Lua 5.1**. Develop and test against LuaJIT 2.1, which is the same dialect
-(`unpack` exists, `table.unpack` does not). LuaJIT lives at
-`%LOCALAPPDATA%\Programs\LuaJIT\bin\luajit.exe` and is **not on PATH**.
+(`unpack` exists, `table.unpack` does not). `luajit` **is on PATH** here — run the suite as
+`luajit tests/run.lua`. (The sibling Control4-HA repos claim it is not on PATH and give an absolute
+path; that is stale on this machine.)
+
+**Run commands standalone, not chained.** A compound `cd "…" && …` does not match this repo's
+permission allowlist and prompts on every call. Use a standalone `cd` once, or `git -C <path> …`.
 
 Do not assume the `bit` library exists. LuaJIT provides it; DriverWorks does not document it. Bit
 manipulation in this driver is written with arithmetic so the same code runs in both. Outbound
