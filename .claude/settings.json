@@ -1,19 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git status:*)",
-      "Bash(git log:*)",
-      "Bash(git diff:*)",
-      "Bash(git show:*)",
-      "Bash(git add:*)",
-      "Bash(git commit:*)",
-      "Bash(git rev-parse:*)",
-      "Bash(git branch:*)",
-      "Bash(git ls-files:*)",
-      "Bash(git check-ignore:*)",
-      "Bash(git merge-base:*)",
+      "Bash(git:*)",
       "Bash(luajit:*)",
-      "Bash(powershell -File tools/build-c4z.ps1:*)"
+      "Bash(cd:*)",
+      "Bash(powershell:*)",
+      "Bash(python:*)"
     ]
   }
 }
