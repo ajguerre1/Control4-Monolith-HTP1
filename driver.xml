@@ -1,0 +1,361 @@
+<devicedata>
+	<copyright>Copyright 2026</copyright>
+	<creator>Control4-Monolith-HTP1</creator>
+	<manufacturer>Monoprice</manufacturer>
+	<name>Monolith HTP-1</name>
+	<model>HTP-1</model>
+	<created>08/04/2026 12:00</created>
+	<modified>08/04/2026 12:00</modified>
+	<version>100</version>
+	<auto_update>false</auto_update>
+	<control>lua_gen</control>
+	<controlmethod>IP</controlmethod>
+	<driver>DriverWorks</driver>
+	<config>
+		<script jit="1" file="driver.lua"/>
+		<properties>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Model</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>HTP-1</default>
+			</property>
+			<property>
+				<name>Firmware Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Serial Number</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Connection Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not connected</default>
+			</property>
+			<!-- Applied above the unit's own cal.vph, so a room cannot be driven
+			     louder than the installer intends. -->
+			<property>
+				<name>Maximum Volume</name>
+				<type>LIST</type>
+				<items>
+					<item>Unit maximum</item>
+					<item>-5 dB</item>
+					<item>-10 dB</item>
+					<item>-15 dB</item>
+					<item>-20 dB</item>
+					<item>-25 dB</item>
+					<item>-30 dB</item>
+				</items>
+				<default>Unit maximum</default>
+				<readonly>false</readonly>
+			</property>
+			<property>
+				<name>Volume Ramp Rate</name>
+				<type>LIST</type>
+				<items>
+					<item>50 ms</item>
+					<item>100 ms</item>
+					<item>150 ms</item>
+					<item>200 ms</item>
+					<item>300 ms</item>
+				</items>
+				<default>100 ms</default>
+				<readonly>false</readonly>
+			</property>
+			<property>
+				<name>Power Off Action</name>
+				<type>LIST</type>
+				<items>
+					<item>Standby</item>
+					<item>Sleep</item>
+				</items>
+				<default>Standby</default>
+				<readonly>false</readonly>
+			</property>
+			<property>
+				<name>Adopt Input Labels</name>
+				<type>LIST</type>
+				<items>
+					<item>Yes</item>
+					<item>No</item>
+				</items>
+				<default>Yes</default>
+				<readonly>false</readonly>
+			</property>
+			<!-- "On for 15 Minutes" cancels itself, so a driver left in debug
+			     cannot fill the Director log indefinitely. -->
+			<property>
+				<name>Debug Mode</name>
+				<type>LIST</type>
+				<items>
+					<item>Off</item>
+					<item>On</item>
+					<item>On for 15 Minutes</item>
+				</items>
+				<default>Off</default>
+				<readonly>false</readonly>
+			</property>
+		</properties>
+		<actions>
+			<action>
+				<name>Refresh From Device</name>
+				<command>REFRESH_FROM_DEVICE</command>
+			</action>
+			<action>
+				<name>Rename Inputs From Device Labels</name>
+				<command>ADOPT_INPUT_LABELS</command>
+			</action>
+			<action>
+				<name>Print Driver State</name>
+				<command>PRINT_STATE</command>
+			</action>
+		</actions>
+		<commands/>
+	</config>
+	<proxies>
+		<proxy proxybindingid="5001" primary="True" name="Monolith HTP-1">receiver</proxy>
+	</proxies>
+	<capabilities>
+		<audio_consumer_count>20</audio_consumer_count>
+		<audio_provider_count>1</audio_provider_count>
+		<video_consumer_count>9</video_consumer_count>
+		<video_provider_count>2</video_provider_count>
+		<can_upclass>True</can_upclass>
+		<can_downclass>True</can_downclass>
+		<can_switch>True</can_switch>
+		<has_audio_signal_sense>False</has_audio_signal_sense>
+		<has_video_signal_sense>False</has_video_signal_sense>
+		<has_discrete_volume_control>True</has_discrete_volume_control>
+		<has_up_down_volume_control>True</has_up_down_volume_control>
+		<has_discrete_mute_control>True</has_discrete_mute_control>
+		<has_toggle_mute_control>True</has_toggle_mute_control>
+		<has_discrete_input_select>True</has_discrete_input_select>
+		<has_discrete_surround_mode_select>True</has_discrete_surround_mode_select>
+		<!-- Flipped to True in M3, when the handlers exist. A declared capability
+		     with no handler is a dead button in the room UI. -->
+		<has_discrete_loudness_control>False</has_discrete_loudness_control>
+		<has_toggle_loudness_control>False</has_toggle_loudness_control>
+		<!-- The unit has parametric EQ and bass management, not tone controls. -->
+		<has_discrete_bass_control>False</has_discrete_bass_control>
+		<has_discrete_treble_control>False</has_discrete_treble_control>
+		<has_discrete_balance_control>False</has_discrete_balance_control>
+		<has_up_down_bass_control>False</has_up_down_bass_control>
+		<has_up_down_treble_control>False</has_up_down_treble_control>
+		<has_up_down_balance_control>False</has_up_down_balance_control>
+		<surround_modes>
+			<surround_mode><name>Direct</name><id>1</id></surround_mode>
+			<surround_mode><name>Native</name><id>2</id></surround_mode>
+			<surround_mode><name>Dolby Surround</name><id>3</id></surround_mode>
+			<surround_mode><name>DTS Neural:X</name><id>4</id></surround_mode>
+			<surround_mode><name>Auro-3D</name><id>5</id></surround_mode>
+			<surround_mode><name>Mono</name><id>6</id></surround_mode>
+			<surround_mode><name>Stereo</name><id>7</id></surround_mode>
+		</surround_modes>
+	</capabilities>
+	<connections>
+		<!-- Control. The driver writes the HTTP upgrade itself, so no delimiter. -->
+		<connection>
+			<id>6001</id>
+			<connectionname>Monolith HTP-1 Control</connectionname>
+			<type>4</type>
+			<consumer>True</consumer>
+			<classes>
+				<class>
+					<classname>TCP</classname>
+					<ports>
+						<port>
+							<number>80</number>
+							<auto_connect>False</auto_connect>
+							<monitor_connection>True</monitor_connection>
+							<keep_connection>True</keep_connection>
+						</port>
+					</ports>
+				</class>
+			</classes>
+		</connection>
+
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>Receiver Proxy</connectionname>
+			<type>2</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>True</linelevel>
+			<classes>
+				<class><classname>RECEIVER</classname></class>
+			</classes>
+		</connection>
+
+		<!-- HDMI inputs. Ids match Mapping.INPUTS; tests/test_manifest.lua enforces it. -->
+		<connection proxybindingid="5001">
+			<id>1000</id><facing>6</facing><connectionname>HDMI Input 1</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>HDMI</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>1001</id><facing>6</facing><connectionname>HDMI Input 2</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>HDMI</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>1002</id><facing>6</facing><connectionname>HDMI Input 3</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>HDMI</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>1003</id><facing>6</facing><connectionname>HDMI Input 4</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>HDMI</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>1004</id><facing>6</facing><connectionname>HDMI Input 5</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>HDMI</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>1005</id><facing>6</facing><connectionname>HDMI Input 6</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>HDMI</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>1006</id><facing>6</facing><connectionname>HDMI Input 7</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>HDMI</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>1007</id><facing>6</facing><connectionname>HDMI Input 8</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>HDMI</classname></class></classes>
+		</connection>
+
+		<!-- The display's eARC return. Cabled as HDMI, selected as audio: the
+		     hidden video binding carries the cable, the virtual one below is what
+		     the proxy addresses. This mirrors the Episode receiver's ARC input. -->
+		<connection>
+			<id>1008</id><facing>6</facing><connectionname>HDMI eARC</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<hidden>True</hidden>
+			<classes><class><classname>HDMI</classname></class></classes>
+		</connection>
+
+		<!-- Audio-only inputs. -->
+		<connection proxybindingid="5001">
+			<id>3000</id><facing>6</facing><connectionname>Analog Input 1</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>STEREO</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>3001</id><facing>6</facing><connectionname>Analog Input 2</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>STEREO</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>3002</id><facing>6</facing><connectionname>Coax Input 1</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>DIGITAL_COAX</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>3003</id><facing>6</facing><connectionname>Coax Input 2</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>DIGITAL_COAX</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>3004</id><facing>6</facing><connectionname>Coax Input 3</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>DIGITAL_COAX</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>3005</id><facing>6</facing><connectionname>Optical Input 1</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>DIGITAL_OPTICAL</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>3006</id><facing>6</facing><connectionname>Optical Input 2</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>DIGITAL_OPTICAL</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>3007</id><facing>6</facing><connectionname>Optical Input 3</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>DIGITAL_OPTICAL</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>3008</id><facing>6</facing><connectionname>eARC Audio</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes>
+				<class><classname>STEREO</classname></class>
+				<class><classname>DIGITAL_OPTICAL</classname></class>
+				<class><classname>DIGITAL_COAX</classname></class>
+			</classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>3009</id><facing>6</facing><connectionname>AES/EBU Input</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>DIGITAL_COAX</classname></class></classes>
+		</connection>
+		<!-- Bluetooth and USB have no cable to bind, but the proxy derives its
+		     selectable inputs from connections, so they need one to be selectable. -->
+		<connection proxybindingid="5001">
+			<id>3010</id><facing>6</facing><connectionname>Bluetooth</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>STEREO</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>3011</id><facing>6</facing><connectionname>USB Audio</connectionname>
+			<type>6</type><consumer>True</consumer><linelevel>True</linelevel>
+			<classes><class><classname>STEREO</classname></class></classes>
+		</connection>
+
+		<!-- Outputs. The unit mirrors its two HDMI outputs; there is no
+		     per-output state in the document, so neither is selectable. -->
+		<connection proxybindingid="5001">
+			<id>2000</id><facing>6</facing><connectionname>HDMI Output 1</connectionname>
+			<type>5</type><consumer>False</consumer><videosource>True</videosource>
+			<linelevel>True</linelevel>
+			<classes><class><classname>HDMI</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>2001</id><facing>6</facing><connectionname>HDMI Output 2</connectionname>
+			<type>5</type><consumer>False</consumer><videosource>True</videosource>
+			<linelevel>True</linelevel>
+			<classes><class><classname>HDMI</classname></class></classes>
+		</connection>
+		<connection proxybindingid="5001">
+			<id>4000</id><facing>6</facing><connectionname>Audio Output</connectionname>
+			<type>6</type><consumer>False</consumer><audiosource>True</audiosource>
+			<linelevel>True</linelevel>
+			<classes><class><classname>SPEAKER</classname></class></classes>
+		</connection>
+
+		<!-- The room end-point. AUDIO_VOLUME is what makes a room's volume and
+		     mute commands reach this driver at all. -->
+		<connection>
+			<id>7000</id>
+			<facing>6</facing>
+			<connectionname>Room Selection</connectionname>
+			<type>7</type>
+			<consumer>False</consumer>
+			<audiosource>True</audiosource>
+			<videosource>False</videosource>
+			<linelevel>True</linelevel>
+			<classes>
+				<class><classname>AUDIO_SELECTION</classname></class>
+				<class><classname>AUDIO_VOLUME</classname></class>
+			</classes>
+		</connection>
+	</connections>
+</devicedata>
