@@ -16,6 +16,9 @@ Transport.__index = Transport
 
 local HEADER_TERMINATOR = "\r\n\r\n"
 
+-- Generous for a real 101 response, which runs to a few hundred bytes.
+local MAX_HANDSHAKE_BYTES = 8192
+
 local function defaultRandomBytes(count)
     local bytes = {}
     for i = 1, count do bytes[i] = string.char(math.random(0, 255)) end
@@ -88,12 +91,26 @@ function Transport:_sendHandshake()
     C4:SendToNetwork(self.binding, self.port, request)
 end
 
+-- Exact header match. A plain substring search over the whole block would also
+-- accept "X-Original-Upgrade: websocket" or "Upgrade: websocketZZZ", so it could
+-- not actually tell us we reached a websocket endpoint -- which is the one thing
+-- this handshake check exists to establish.
+local function hasHeader(head, name, value)
+    for line in (head .. "\r\n"):gmatch("(.-)\r\n") do
+        local key, val = line:match("^([^:]+):%s*(.-)%s*$")
+        if key and key:lower() == name and val:lower() == value then
+            return true
+        end
+    end
+    return false
+end
+
 function Transport:_completeHandshake(head)
     local status = head:match("^HTTP/1%.1 (%d+)")
     if status ~= "101" then
         return self:_shutdown("handshake rejected with status " .. tostring(status or "?"))
     end
-    if not head:lower():find("upgrade: websocket", 1, true) then
+    if not hasHeader(head, "upgrade", "websocket") then
         return self:_shutdown("handshake response is not a websocket upgrade")
     end
 
@@ -107,6 +124,13 @@ end
 function Transport:onData(data)
     if self.state == "handshaking" then
         self.rxBuf = self.rxBuf .. data
+        -- A peer that never sends the terminator would otherwise grow this
+        -- buffer without bound, on a controller shared with every other driver
+        -- in the project. Real response headers are a few hundred bytes.
+        if #self.rxBuf > MAX_HANDSHAKE_BYTES then
+            return self:_shutdown("handshake response exceeded "
+                .. MAX_HANDSHAKE_BYTES .. " bytes without completing")
+        end
         local terminator = self.rxBuf:find(HEADER_TERMINATOR, 1, true)
         if not terminator then return end
 

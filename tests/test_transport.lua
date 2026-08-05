@@ -150,6 +150,30 @@ return {
         end,
     },
     {
+        name = "a handshake response that never terminates is cut off, not buffered",
+        fn = function()
+            local t, events = build()
+            t:connect()
+            t:onConnectionStatus("ONLINE")
+            for _ = 1, 10 do t:onData(string.rep("x", 1024)) end
+            H.equal(t.state, "closed", "an endless response must not grow the buffer forever")
+            H.isTrue(events.closed[1]:find("exceeded", 1, true) ~= nil,
+                "the reason should name the cap: " .. tostring(events.closed[1]))
+        end,
+    },
+    {
+        name = "a header that merely contains the upgrade text is not accepted",
+        fn = function()
+            local t, events = build()
+            t:connect()
+            t:onConnectionStatus("ONLINE")
+            t:onData("HTTP/1.1 101 Switching Protocols\r\n" ..
+                "X-Original-Upgrade: websocket\r\nUpgrade: websocketZZZ\r\n\r\n")
+            H.equal(t.state, "closed", "neither line is a real Upgrade: websocket header")
+            H.equal(events.opened, 0)
+        end,
+    },
+    {
         name = "an offline socket during the handshake closes the transport",
         fn = function()
             local t, events = build()
