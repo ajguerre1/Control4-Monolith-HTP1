@@ -53,6 +53,20 @@ function Proxy:_setVolumeDb(db)
     if not low then return end
     if db < low then db = low end
     if db > high then db = high end
+
+    if self.state.fields.volume == db then
+        -- Already there, so writing again would be noise: a ramp held against
+        -- either end of the range would otherwise rewrite the same value for as
+        -- long as the button is down.
+        --
+        -- Still re-notify, because percent maps onto dB lossily. The room may
+        -- believe a percentage that does not round to this dB, and dB is the
+        -- truth -- without this the room's bar could sit one step off with
+        -- nothing to correct it.
+        self:_notifyVolume()
+        return
+    end
+
     self.session:write("/volume", db)
 end
 

@@ -111,12 +111,48 @@ return {
     {
         name = "SET_VOLUME_LEVEL maps percent onto the unit's dB range",
         fn = function()
+            -- 80 %, not 50 %: the fixture already sits at -25 dB, which is what
+            -- 50 % of -50..0 maps to, so that level would exercise the
+            -- already-there path instead of the mapping this test is named for.
             local proxy, _, transport = build()
-            proxy:handle(BINDING, "SET_VOLUME_LEVEL", { LEVEL = "50", OUTPUT = tostring(OUTPUT) })
+            proxy:handle(BINDING, "SET_VOLUME_LEVEL", { LEVEL = "80", OUTPUT = tostring(OUTPUT) })
             mock.advance(50)
             local ops = lastOps(transport)
             H.equal(ops[1].path, "/volume")
-            H.equal(ops[1].value, -25, "50 % of -50..0 dB")
+            H.equal(ops[1].value, -10, "80 % of -50..0 dB")
+        end,
+    },
+    {
+        name = "setting the level the unit already holds notifies but does not write",
+        fn = function()
+            local proxy, _, transport, state = build()
+            H.equal(state.fields.volume, -25)
+            mock.clearCalls()
+            proxy:handle(BINDING, "SET_VOLUME_LEVEL", { LEVEL = "50" })
+            mock.advance(50)
+            H.equal(lastOps(transport), nil, "no command for a value already held")
+            H.isTrue(mock.lastProxyCall(BINDING, "VOLUME_LEVEL_CHANGED") ~= nil,
+                "the room is still told the truth, since percent maps to dB lossily")
+        end,
+    },
+    {
+        name = "a ramp held at the end of the range stops writing",
+        fn = function()
+            -- Without the already-there guard this rewrites the same dB for as
+            -- long as the button is held -- exactly the noise the design forbids.
+            local proxy, _, transport, state = build({ rampMs = 100 })
+            proxy:handle(BINDING, "START_VOL_DOWN", {})
+            mock.advance(10000)
+            proxy:handle(BINDING, "STOP_VOL_DOWN", {})
+            mock.advance(50)
+            H.equal(state.fields.volume, -50, "clamped at the bottom")
+
+            local before = #transport.sent
+            proxy:handle(BINDING, "START_VOL_DOWN", {})
+            mock.advance(10000)
+            proxy:handle(BINDING, "STOP_VOL_DOWN", {})
+            mock.advance(50)
+            H.equal(#transport.sent, before, "a ramp against the stop sends nothing at all")
         end,
     },
     {
