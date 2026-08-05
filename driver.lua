@@ -331,9 +331,42 @@ local ACTIONS = {
         end
         print("  connected = " .. tostring(DRIVER.session.connected))
     end,
-    -- Adopting labels is applied in M2, when the driver renames its connections.
-    ADOPT_INPUT_LABELS = function()
-        print("HTP-1: input labels are applied in M2")
+    -- The driver cannot rename Control4's connections -- there is no DriverWorks
+    -- call for it (see the requirements doc for the evidence) -- so it reports
+    -- the unit's labels instead of promising to apply them. Mapped inputs print
+    -- in Mapping.INPUTS' declared order; inputs the unit reported that this
+    -- driver does not model (Roon has no Control4 connection) print after,
+    -- sorted by key. Either half of pairs(DRIVER.state.inputs) is
+    -- iteration-order-unstable in Lua, so both halves are put into a stable
+    -- order explicitly rather than left to pairs().
+    PRINT_INPUT_LABELS = function()
+        print("HTP-1 input labels:")
+        local inputs = DRIVER.state.inputs
+        local seen = {}
+
+        for _, mapped in ipairs(Mapping.INPUTS) do
+            local entry = inputs[mapped.key]
+            if entry then
+                seen[mapped.key] = true
+                print(string.format(
+                    "  connection %d (%s): key=%s label=%s visible=%s",
+                    mapped.binding, mapped.name, mapped.key,
+                    tostring(entry.label or ""), tostring(entry.visible)))
+            end
+        end
+
+        local unmappedKeys = {}
+        for key in pairs(inputs) do
+            if not seen[key] then table.insert(unmappedKeys, key) end
+        end
+        table.sort(unmappedKeys)
+
+        for _, key in ipairs(unmappedKeys) do
+            local entry = inputs[key]
+            print(string.format(
+                "  no Control4 connection: key=%s label=%s visible=%s",
+                key, tostring(entry.label or ""), tostring(entry.visible)))
+        end
     end,
 }
 

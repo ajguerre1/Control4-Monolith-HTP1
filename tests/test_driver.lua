@@ -12,7 +12,7 @@ local DEFAULTS = {
     ["System Software Version"] = "", ["AV Controller Version"] = "",
     ["Serial Number"] = "", ["Connection Status"] = "Not connected",
     ["Maximum Volume"] = "Unit maximum", ["Volume Ramp Rate"] = "100 ms",
-    ["Power Off Action"] = "Standby", ["Adopt Input Labels"] = "Yes",
+    ["Power Off Action"] = "Standby",
     ["Debug Mode"] = "Off",
 }
 
@@ -180,6 +180,66 @@ return {
             local before = #mock.sent
             ExecuteCommand("REFRESH_FROM_DEVICE", {})
             H.equal(#mock.sent, before + 1, "a getmso should have gone out")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Print Input Labels reports one line per input the unit sent -- mapped inputs in " ..
+               "Mapping.INPUTS order, then unmapped ones (Roon) sorted by key",
+        fn = function()
+            loadDriver()
+            goLive()   -- F.modern()'s inputs: h1, h2, h3, a1, optical1 (mapped), roon (not)
+            mock.clearCalls()
+            ExecuteCommand("PRINT_INPUT_LABELS", {})
+
+            local lines = mock.printed
+            H.count(lines, 7, "a header line plus one line per reported input")
+            H.equal(lines[1], "HTP-1 input labels:")
+
+            -- Mapping.INPUTS declares h1, h2, h3 ... a1 ... optical1 ... in that
+            -- order; only the ones the unit actually reported should appear, in
+            -- that same relative order.
+            local mappedOrder = { "h1", "h2", "h3", "a1", "optical1" }
+            for i, key in ipairs(mappedOrder) do
+                local line = lines[i + 1]
+                H.isTrue(line:find("key=" .. key, 1, true) ~= nil,
+                    "line " .. (i + 1) .. " should report " .. key)
+                H.isTrue(line:find("connection ", 1, true) ~= nil,
+                    key .. " is mapped and should carry a Control4 connection")
+            end
+            H.isTrue(lines[2]:find("label=Streamer", 1, true) ~= nil)
+            H.isTrue(lines[2]:find("visible=true", 1, true) ~= nil)
+            H.isTrue(lines[4]:find("visible=false", 1, true) ~= nil,
+                "h3 is reported not visible in the fixture")
+
+            local roonLine = lines[7]
+            H.isTrue(roonLine:find("key=roon", 1, true) ~= nil,
+                "Roon has no Control4 connection but should still be printed")
+            H.isTrue(roonLine:find("label=Roon", 1, true) ~= nil)
+            H.isTrue(roonLine:find("no Control4 connection", 1, true) ~= nil,
+                "an installer should be told plainly that Roon cannot be selected from Control4")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Print Input Labels prints in the same order on two consecutive runs",
+        fn = function()
+            loadDriver()
+            goLive()
+
+            mock.clearCalls()
+            ExecuteCommand("PRINT_INPUT_LABELS", {})
+            local first = {}
+            for i, line in ipairs(mock.printed) do first[i] = line end
+
+            mock.clearCalls()
+            ExecuteCommand("PRINT_INPUT_LABELS", {})
+            local second = mock.printed
+
+            H.count(second, #first, "the second run should print the same number of lines")
+            for i, line in ipairs(first) do
+                H.equal(second[i], line, "line " .. i .. " should match across runs")
+            end
             H.assertNoErrorLog()
         end,
     },

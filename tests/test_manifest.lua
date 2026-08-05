@@ -212,7 +212,7 @@ return {
             for _, name in ipairs({ "Driver Version", "System Software Version",
                                     "AV Controller Version", "Serial Number", "Model",
                                     "Connection Status", "Maximum Volume", "Volume Ramp Rate",
-                                    "Power Off Action", "Adopt Input Labels", "Debug Mode" }) do
+                                    "Power Off Action", "Debug Mode" }) do
                 H.isTrue(xml:find("<name>" .. name .. "</name>", 1, true) ~= nil,
                     "missing property: " .. name)
             end
@@ -250,6 +250,45 @@ return {
             H.equal(count, 6, "expected exactly six declared events")
             for id = 1, 6 do
                 H.isTrue(events[id] ~= nil, "no <event> declared with id " .. id)
+            end
+        end,
+    },
+    {
+        -- The driver cannot rename Control4's inputs (no DriverWorks call does
+        -- it), so promising to via a "Adopt Input Labels" Yes/No property was
+        -- withdrawn in favour of PRINT_INPUT_LABELS, which reports the unit's
+        -- labels instead of applying them.
+        name = "the Adopt Input Labels property is gone, and Print Input Labels replaces it",
+        fn = function()
+            local xml = readManifest()
+            H.isTrue(xml:find("Adopt Input Labels", 1, true) == nil,
+                "the property promised a rename this driver cannot perform")
+            H.isTrue(xml:find("ADOPT_INPUT_LABELS", 1, true) == nil,
+                "the retired command should not remain anywhere in the manifest")
+            H.isTrue(xml:find("Rename Inputs From Device Labels", 1, true) == nil,
+                "the retired action name should not remain anywhere in the manifest")
+            H.isTrue(xml:find("<name>Print Input Labels</name>", 1, true) ~= nil,
+                "the replacement action should be declared")
+            H.isTrue(xml:find("<command>PRINT_INPUT_LABELS</command>", 1, true) ~= nil,
+                "the replacement command should be declared")
+        end,
+    },
+    {
+        name = "no shipped Lua source references the retired ADOPT_INPUT_LABELS command",
+        fn = function()
+            -- The same file list tools/build-c4z.ps1 packages: driver code only,
+            -- not the test suite that is asserting the retirement.
+            local sources = {
+                "driver.lua", "htp1/frame.lua", "htp1/protocol.lua", "htp1/mapping.lua",
+                "htp1/state.lua", "htp1/transport.lua", "htp1/session.lua", "htp1/proxy.lua",
+                "htp1/log.lua", "module/json.lua",
+            }
+            for _, path in ipairs(sources) do
+                local handle = assert(io.open(path, "r"), path .. " should exist")
+                local text = handle:read("*a")
+                handle:close()
+                H.isTrue(text:find("ADOPT_INPUT_LABELS", 1, true) == nil,
+                    path .. " should not reference the retired command")
             end
         end,
     },
