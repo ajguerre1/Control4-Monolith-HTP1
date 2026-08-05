@@ -108,4 +108,26 @@ return {
             H.equal(back.arg[2].path, "/volume")
         end,
     },
+    {
+        name = "a malformed message produces no output of its own",
+        fn = function()
+            local realPrint = print
+            local lines = {}
+            print = function() table.insert(lines, true) end
+            local message = Protocol.parse("mso {not json")
+            print = realPrint
+            H.isTrue(message.err ~= nil, "the error is still reported")
+            H.count(lines, 0,
+                "the vendored codec must not print; this driver owns its own logging")
+        end,
+    },
+    {
+        name = "a null argument is reported as null, not as undecodable",
+        fn = function()
+            local message = Protocol.parse("mso null")
+            H.isTrue(message.err ~= nil, "null is still an error for this driver")
+            H.isTrue(message.err:find("null", 1, true) ~= nil,
+                "the message should say null rather than blame the decoder: " .. message.err)
+        end,
+    },
 }
