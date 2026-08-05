@@ -381,7 +381,7 @@
 		<event>
 			<id>1</id>
 			<name>Connected</name>
-			<description>Fires when the driver establishes a connection to the unit.</description>
+			<description>Fires when the driver establishes a connection to the unit. Read the state variables here rather than waiting for Powered On or Input Changed: after a driver reload those fire only on a later transition, not for state that was already true. State variables read empty until this fires.</description>
 		</event>
 		<event>
 			<id>2</id>
@@ -391,7 +391,7 @@
 		<event>
 			<id>3</id>
 			<name>Powered On</name>
-			<description>Fires when the unit's power state transitions from off to on.</description>
+			<description>Fires when the unit's power state transitions from off to on. Not fired for a unit already on when the driver starts, so that a controller restart cannot trigger programming meant for a real power-on.</description>
 		</event>
 		<event>
 			<id>4</id>

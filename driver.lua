@@ -35,7 +35,18 @@ end
 --
 -- Every function returns a string, never nil: a nil field must read as an
 -- empty string, never the literal text "nil".
-local function boolText(value) return value and "true" or "false" end
+--
+-- UNKNOWN IS EMPTY, and that distinction is the point. Before the first
+-- document arrives -- and after a driver reload while the unit is still being
+-- read -- these fields are genuinely unknown, not false. Reporting "Off" or
+-- "false" there would be a determinate answer to a question nobody can answer
+-- yet, and a program acting on it would act on a value the driver invented.
+-- CONNECTED is the one variable that is always determinate, because whether
+-- the driver has a live session is something it always knows.
+local function boolText(value)
+    if value == nil then return "" end
+    return value and "true" or "false"
+end
 
 local function text(value)
     if value == nil then return "" end
@@ -57,8 +68,12 @@ local function inputLabelText(state)
 end
 
 local VARIABLES = {
-    CONNECTED          = function(_, connected) return boolText(connected) end,
-    POWER_STATE        = function(state) return state.fields.power and "On" or "Off" end,
+    -- Always determinate: the driver always knows whether it has a session.
+    CONNECTED          = function(_, connected) return connected and "true" or "false" end,
+    POWER_STATE        = function(state)
+        if state.fields.power == nil then return "" end
+        return state.fields.power and "On" or "Off"
+    end,
     INPUT_ID           = function(state) return text(state.fields.input) end,
     INPUT_LABEL        = function(state) return inputLabelText(state) end,
     VOLUME_DB          = function(state) return text(state.fields.volume) end,

@@ -388,8 +388,12 @@ return {
             H.equal(mock.variables.INPUT_ID, "", "input is absent from F.sparse()")
             H.equal(mock.variables.INPUT_LABEL, "", "no input selected, so no label to show")
             H.equal(mock.variables.VOLUME_PERCENT, "", "vpl/vph are absent, so no percent can be computed")
+            -- The contrast that matters: powerIsOn is genuinely false in this
+            -- fixture and reads "Off", while muted is simply absent and reads
+            -- empty. Reporting an absent field as "false" would be a
+            -- determinate answer to a question nothing has answered yet.
             H.equal(mock.variables.POWER_STATE, "Off", "F.sparse() reports powerIsOn = false")
-            H.equal(mock.variables.MUTED, "false", "muted is absent, never reported as true on trust")
+            H.equal(mock.variables.MUTED, "", "muted is absent, so unknown rather than false")
             H.assertNoErrorLog()
         end,
     },
