@@ -30,7 +30,13 @@ Durable knowledge goes to the memory CLI at scope `project:control4-ha`. Run `me
 ## Environment
 
 Control4 DriverWorks runs **Lua 5.1**. Develop and test against LuaJIT 2.1, which is the same dialect
-(`unpack` exists, `table.unpack` does not).
+(`unpack` exists, `table.unpack` does not). LuaJIT lives at
+`%LOCALAPPDATA%\Programs\LuaJIT\bin\luajit.exe` and is **not on PATH**.
+
+Do not assume the `bit` library exists. LuaJIT provides it; DriverWorks does not document it. Bit
+manipulation in this driver is written with arithmetic so the same code runs in both. Outbound
+WebSocket payloads are small, so the cost is irrelevant — and inbound frames from the unit are
+unmasked, so they are never XORed at all.
 
 No submodules. This driver shares no code with the Control4-HA drivers.
 
@@ -83,6 +89,18 @@ module/json.lua
 
 Development-only paths (`docs/`, `tests/`, `tools/`, `.ai-devkit.json`, `.claude/`, `CLAUDE.md`,
 `.vscode/`, `build/`) must never end up inside the archive.
+
+The build names every payload file explicitly rather than sweeping the tree, and **fails** on a
+missing file, on a `require` that is not in the payload, or on a payload file git does not track.
+
+`driver.xml` sets `<auto_update>false</auto_update>` so the director cannot replace this driver with
+someone else's build.
+
+The archive name `Monolith.HTP1.c4z` is load-bearing: Composer identifies a driver by file name, so
+building under a different name adds a second driver instead of updating the installed one.
+
+**Never copy a build into the Composer drivers folder.** The build writes to `build/` and stops.
+Installing is the owner's action.
 
 ## Privacy rules
 

@@ -194,10 +194,11 @@ Swapping implementations means reimplementing those four functions and touching 
 driver.xml
 driver.lua            Control4 entry points only — thin dispatch, no logic
 htp1/frame.lua        RFC 6455 encode/decode                       [pure Lua]
-htp1/transport.lua    WebSocket client over C4:CreateNetworkConnection
 htp1/protocol.lua     verb layer: getmso / changemso / msoupdate / error   [pure Lua]
-htp1/state.lua        projected state + whitelisted JSON-patch applier     [pure Lua]
 htp1/mapping.lua      connection id <-> MSO key, surround ids, volume scale [pure Lua]
+htp1/state.lua        projected state + whitelisted JSON-patch applier     [pure Lua]
+htp1/transport.lua    WebSocket client: socket, handshake, keepalive, reconnection
+htp1/session.lua      orchestration: getmso on open, dispatch, write queue, reconcile
 htp1/proxy.lua        receiver proxy handlers and notifications
 htp1/commands.lua     Composer actions and programming commands
 htp1/log.lua          debug logging with self-cancelling timer
@@ -205,7 +206,19 @@ module/json.lua       vendored JSON codec
 ```
 
 The four modules marked pure Lua hold essentially all the logic that can be wrong and touch no `C4:`
-API, so they run under LuaJIT with neither a controller nor a device.
+API, so they run under LuaJIT with neither a controller nor a device. `session.lua` takes its
+transport by injection, so it tests the same way against a fake.
+
+The split between `transport` and `session` is what makes the seam real: **staying connected is the
+transport's job**, so a replacement implementation brings its own reconnection and keepalive rather
+than needing the rest of the driver rearranged around it. `session.lua` only ever sees `open`,
+`message`, `closed`.
+
+`Sec-WebSocket-Accept` validation is best-effort. `C4:Base64Encode` and `C4:Hash` both appear in
+shipped Control4 drivers, but whether `C4:Hash` accepts `"SHA1"` on the target OS is unconfirmed. If
+it does, the driver validates; if not, it logs once at debug and accepts a well-formed `101`. The
+real assurance that our framing and masking are correct comes from the fake server, which validates
+them strictly.
 
 ### WebSocket client
 

@@ -16,11 +16,22 @@ Produces `build/Monolith.HTP1.c4z` and prints the archive layout. The archive co
 `driver.lua`, `htp1/*.lua` and `module/json.lua` and nothing else — no `docs/`, `tests/`, `tools/`,
 `.ai-devkit.json`, `.claude/`, `CLAUDE.md`, `.vscode/` or `build/`.
 
+Following the convention of the sibling drivers, the build **fails rather than warns** on a missing
+payload file, on a `require` that resolves to something not in the payload, and on a payload file git
+does not track. The third check exists because a sibling driver shipped two builds containing files a
+global gitignore silently excluded, and the repository could not reproduce its own releases.
+
+**The build never installs.** It writes to `build/` and stops. Copying anything into
+`Documents\Control4\Drivers` is the owner's action, not the build's.
+
+Composer identifies a driver by file name, so the archive name must stay `Monolith.HTP1.c4z` — a
+build under a different name adds a second driver instead of updating the installed one.
+
 ## Install
 
-The owner performs the Composer Pro steps; this repository produces the artefact and the instructions.
+The owner performs every step below; this repository produces the artefact and the instructions.
 
-1. Copy `build/Monolith.HTP1.c4z` to `Documents\Control4\Drivers\`.
+1. Copy `build/Monolith.HTP1.c4z` into `Documents\Control4\Drivers\`.
 2. In Composer Pro: **Driver → Add or Update Driver**, then refresh the driver list.
 3. Add the driver to the room, set its IP address on the network connection (binding 6001).
 4. Bind sources to the HDMI inputs, the display to an HDMI output, and the amplifiers to the audio
