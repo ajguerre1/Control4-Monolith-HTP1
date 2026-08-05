@@ -83,4 +83,150 @@ return {
                 "four-byte mask key")
         end,
     },
+    {
+        name = "decode consumes nothing while the header is short",
+        fn = function()
+            local f, consumed = Frame.decode("\129")
+            H.equal(f, nil)
+            H.equal(consumed, 0)
+        end,
+    },
+    {
+        name = "decode consumes nothing while the payload is incomplete",
+        fn = function()
+            local f, consumed = Frame.decode("\129\6get")
+            H.equal(f, nil)
+            H.equal(consumed, 0)
+        end,
+    },
+    {
+        name = "decode reads an unmasked short text frame",
+        fn = function()
+            local f, consumed = Frame.decode("\129\4mso ")
+            H.isTrue(f ~= nil, "frame should decode")
+            H.isTrue(f.fin, "FIN should be set")
+            H.equal(f.opcode, Frame.OP.TEXT)
+            H.equal(f.payload, "mso ")
+            H.equal(consumed, 6)
+        end,
+    },
+    {
+        name = "decode reads the 16-bit length form",
+        fn = function()
+            local raw = "\129\126" .. string.char(1, 44) .. string.rep("y", 300)
+            local f, consumed = Frame.decode(raw)
+            H.equal(#f.payload, 300)
+            H.equal(consumed, 4 + 300)
+        end,
+    },
+    {
+        name = "decode reads the 64-bit length form",
+        fn = function()
+            local raw = "\129\127" .. string.char(0, 0, 0, 0, 0, 1, 17, 112) .. string.rep("z", 70000)
+            local f, consumed = Frame.decode(raw)
+            H.equal(#f.payload, 70000)
+            H.equal(consumed, 10 + 70000)
+        end,
+    },
+    {
+        name = "decode rejects a payload above the cap instead of buffering it",
+        fn = function()
+            local raw = "\129\127" .. string.char(0, 0, 0, 0, 255, 255, 255, 255)
+            local f, consumed, err = Frame.decode(raw)
+            H.equal(f, nil)
+            H.equal(consumed, -1)
+            H.isTrue(err:find("exceeds", 1, true) ~= nil, "error should name the cap: " .. tostring(err))
+        end,
+    },
+    {
+        name = "decode rejects a masked server frame",
+        fn = function()
+            local f, consumed, err = Frame.decode("\129\132\1\2\3\4abcd")
+            H.equal(f, nil)
+            H.equal(consumed, -1)
+            H.isTrue(err:find("masked", 1, true) ~= nil, "error should say masked: " .. tostring(err))
+        end,
+    },
+    {
+        name = "the reader yields a whole message from one chunk",
+        fn = function()
+            local r = Frame.newReader()
+            r:push("\129\4mso ")
+            local m = r:next()
+            H.equal(m.opcode, Frame.OP.TEXT)
+            H.equal(m.payload, "mso ")
+            H.equal(r:next(), nil, "no second message")
+        end,
+    },
+    {
+        name = "the reader reassembles a message split byte by byte",
+        fn = function()
+            local raw = "\129\11hello world"
+            local r = Frame.newReader()
+            for i = 1, #raw - 1 do
+                r:push(raw:sub(i, i))
+                H.equal(r:next(), nil, "incomplete at byte " .. i)
+            end
+            r:push(raw:sub(#raw))
+            H.equal(r:next().payload, "hello world")
+        end,
+    },
+    {
+        name = "the reader yields several messages from a single read",
+        fn = function()
+            local r = Frame.newReader()
+            r:push("\129\1a" .. "\129\1b" .. "\129\1c")
+            H.equal(r:next().payload, "a")
+            H.equal(r:next().payload, "b")
+            H.equal(r:next().payload, "c")
+            H.equal(r:next(), nil)
+        end,
+    },
+    {
+        name = "the reader joins continuation frames into one message",
+        fn = function()
+            local r = Frame.newReader()
+            r:push("\1\3one")      -- TEXT, FIN clear
+            H.equal(r:next(), nil, "an open fragment yields nothing yet")
+            r:push("\0\3two")      -- CONT, FIN clear
+            H.equal(r:next(), nil)
+            r:push("\128\5three")  -- CONT, FIN set
+            local m = r:next()
+            H.equal(m.opcode, Frame.OP.TEXT, "the message keeps the first frame's opcode")
+            H.equal(m.payload, "onetwothree")
+        end,
+    },
+    {
+        name = "a control frame passes through without disturbing an open fragment",
+        fn = function()
+            local r = Frame.newReader()
+            r:push("\1\3one")
+            H.equal(r:next(), nil)
+            r:push("\137\0")       -- PING, FIN set, empty
+            H.equal(r:next().opcode, Frame.OP.PING)
+            r:push("\128\3two")
+            H.equal(r:next().payload, "onetwo", "the fragment survived the ping")
+        end,
+    },
+    {
+        name = "a continuation with nothing to continue is a protocol error",
+        fn = function()
+            local r = Frame.newReader()
+            r:push("\128\3one")    -- CONT with FIN, no open fragment
+            local m, err = r:next()
+            H.equal(m, nil)
+            H.isTrue(err:find("continue", 1, true) ~= nil, "error should explain: " .. tostring(err))
+        end,
+    },
+    {
+        name = "the reader handles a 38 KB message delivered in 1 KB chunks",
+        fn = function()
+            local raw = "\129\127" .. string.char(0, 0, 0, 0, 0, 0, 148, 112) .. string.rep("m", 38000)
+            local r = Frame.newReader()
+            for i = 1, #raw, 1024 do r:push(raw:sub(i, i + 1023)) end
+            local m = r:next()
+            H.equal(#m.payload, 38000)
+            H.equal(m.opcode, Frame.OP.TEXT)
+        end,
+    },
 }

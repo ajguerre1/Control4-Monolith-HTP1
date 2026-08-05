@@ -63,4 +63,84 @@ function Frame.encode(opcode, payload, maskKey)
     return header .. maskKey .. Frame.applyMask(payload, maskKey)
 end
 
+-- Returns (frame, consumed) on success, (nil, 0) when more bytes are needed,
+-- and (nil, -1, err) on a protocol violation the caller must not recover from.
+function Frame.decode(buf)
+    if #buf < 2 then return nil, 0 end
+
+    local b1, b2 = byte(buf, 1), byte(buf, 2)
+    local fin    = b1 >= 128
+    local opcode = b1 % 16
+    local masked = b2 >= 128
+    local length = b2 % 128
+    local offset = 2
+
+    if length == 126 then
+        if #buf < 4 then return nil, 0 end
+        length = byte(buf, 3) * 256 + byte(buf, 4)
+        offset = 4
+    elseif length == 127 then
+        if #buf < 10 then return nil, 0 end
+        length = 0
+        for i = 3, 10 do length = length * 256 + byte(buf, i) end
+        offset = 10
+    end
+
+    if length > Frame.MAX_PAYLOAD then
+        return nil, -1, "frame payload of " .. length .. " bytes exceeds the cap"
+    end
+    if masked then
+        return nil, -1, "server frame is masked, which RFC 6455 forbids"
+    end
+    if #buf < offset + length then return nil, 0 end
+
+    return { fin = fin, opcode = opcode, payload = sub(buf, offset + 1, offset + length) },
+        offset + length
+end
+
+local Reader = {}
+Reader.__index = Reader
+
+function Frame.newReader()
+    return setmetatable({ buf = "", fragment = nil, fragmentOp = nil }, Reader)
+end
+
+function Reader:push(chunk)
+    self.buf = self.buf .. chunk
+end
+
+-- Returns a whole message, or nil when more bytes are needed, or (nil, err).
+function Reader:next()
+    while true do
+        local frame, consumed, err = Frame.decode(self.buf)
+        if err then return nil, err end
+        if not frame then return nil end
+        self.buf = sub(self.buf, consumed + 1)
+
+        if frame.opcode >= 0x8 then
+            -- Control frames are never fragmented and may arrive between the
+            -- fragments of a data message, so they bypass the fragment state.
+            return { opcode = frame.opcode, payload = frame.payload }
+        end
+
+        if frame.opcode == Frame.OP.CONT then
+            if not self.fragment then
+                return nil, "continuation frame with nothing to continue"
+            end
+            self.fragment = self.fragment .. frame.payload
+        else
+            if self.fragment then
+                return nil, "new data frame while a fragmented message is open"
+            end
+            self.fragment, self.fragmentOp = frame.payload, frame.opcode
+        end
+
+        if frame.fin then
+            local message = { opcode = self.fragmentOp, payload = self.fragment }
+            self.fragment, self.fragmentOp = nil, nil
+            return message
+        end
+    end
+end
+
 return Frame
