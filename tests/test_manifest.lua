@@ -28,6 +28,33 @@ local function parseConnections(xml)
     return connections
 end
 
+-- Returns { [id] = name } for every <event>.
+local function parseEvents(xml)
+    local events = {}
+    for block in xml:gmatch("<event>(.-)</event>") do
+        local id = tonumber(block:match("<id>%s*(%d+)%s*</id>"))
+        local name = block:match("<name>%s*(.-)%s*</name>")
+        if id and name then events[id] = name end
+    end
+    return events
+end
+
+-- driver.lua's DRIVER.EVENTS table is assigned at file scope (not inside
+-- buildDriver), and none of its requires touch the C4 API at load time, so a
+-- bare dofile is enough to read it back -- no mock, no OnDriverInit needed.
+local function loadEventNames()
+    for _, name in ipairs({ "DRIVER", "OnDriverInit", "OnDriverLateInit", "OnDriverDestroyed",
+                             "OnPropertyChanged", "ExecuteCommand", "ReceivedFromProxy",
+                             "OnConnectionStatusChanged", "OnBindingChanged",
+                             "OnNetworkBindingChanged", "ReceivedFromNetwork" }) do
+        _G[name] = nil
+    end
+    dofile("driver.lua")
+    local names = {}
+    for _, name in pairs(DRIVER.EVENTS) do names[name] = true end
+    return names
+end
+
 return {
     {
         name = "the manifest declares the receiver proxy on binding 5001",
@@ -188,6 +215,41 @@ return {
                                     "Power Off Action", "Adopt Input Labels", "Debug Mode" }) do
                 H.isTrue(xml:find("<name>" .. name .. "</name>", 1, true) ~= nil,
                     "missing property: " .. name)
+            end
+        end,
+    },
+    {
+        name = "every event the Lua fires is declared in driver.xml, and vice versa",
+        fn = function()
+            -- A one-directional check would miss half of what can go wrong: a
+            -- typo'd event name in the Lua would be invisible to programming
+            -- (fires something nobody declared), and a declared-but-never-fired
+            -- event is a dead entry in the programming UI. Both directions, or
+            -- neither is proven.
+            local declared = {}
+            for _, name in pairs(parseEvents(readManifest())) do declared[name] = true end
+
+            local fired = loadEventNames()
+
+            for name in pairs(fired) do
+                H.isTrue(declared[name],
+                    "the Lua fires '" .. name .. "' but driver.xml does not declare it")
+            end
+            for name in pairs(declared) do
+                H.isTrue(fired[name],
+                    "driver.xml declares '" .. name .. "' but the Lua never fires it")
+            end
+        end,
+    },
+    {
+        name = "the six events are declared with unique, contiguous ids starting at 1",
+        fn = function()
+            local events = parseEvents(readManifest())
+            local count = 0
+            for _ in pairs(events) do count = count + 1 end
+            H.equal(count, 6, "expected exactly six declared events")
+            for id = 1, 6 do
+                H.isTrue(events[id] ~= nil, "no <event> declared with id " .. id)
             end
         end,
     },

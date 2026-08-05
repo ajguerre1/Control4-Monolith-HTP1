@@ -25,6 +25,138 @@ local function parseRampMs(value)
 end
 
 --------------------------------------------------------------------------------
+-- Variables and events
+--------------------------------------------------------------------------------
+
+-- Every variable Composer sees, and how to compute it from live state. ONE
+-- table drives both creation (AddVariable, at init) and every update
+-- (SetVariable, from every change) -- a variable defined here but missing
+-- from either call site is not a failure mode this shape allows.
+--
+-- Every function returns a string, never nil: a nil field must read as an
+-- empty string, never the literal text "nil".
+local function boolText(value) return value and "true" or "false" end
+
+local function text(value)
+    if value == nil then return "" end
+    return tostring(value)
+end
+
+-- The unit's own label beats nothing; the Control4 connection name beats an
+-- empty field. Task M2-T3 (input labels) reads Mapping.INPUTS for the same
+-- reason -- extend this lookup rather than forking it.
+local function inputLabelText(state)
+    local key = state.fields.input
+    if key == nil then return "" end
+    local label = state:inputLabel(key)
+    if label ~= nil then return label end
+    for _, input in ipairs(Mapping.INPUTS) do
+        if input.key == key then return input.name end
+    end
+    return ""
+end
+
+local VARIABLES = {
+    CONNECTED          = function(_, connected) return boolText(connected) end,
+    POWER_STATE        = function(state) return state.fields.power and "On" or "Off" end,
+    INPUT_ID           = function(state) return text(state.fields.input) end,
+    INPUT_LABEL        = function(state) return inputLabelText(state) end,
+    VOLUME_DB          = function(state) return text(state.fields.volume) end,
+    VOLUME_PERCENT     = function(state)
+        return text(Mapping.dbToPercent(state.fields.volume, state.fields.vpl, state.fields.vph))
+    end,
+    MUTED              = function(state) return boolText(state.fields.muted) end,
+    -- The unit's own text, richer than the Control4 surround id: it reads
+    -- "Native Dolby ATMOS" where the proxy only knows "Dolby Surround".
+    SURROUND_MODE      = function(state) return text(state.fields.surroundMode) end,
+    INPUT_FORMAT       = function(state) return text(state.fields.decSourceProgram) end,
+    INPUT_PROGRAM      = function(state) return text(state.fields.decProgramFormat) end,
+    INPUT_SAMPLE_RATE  = function(state) return text(state.fields.decSampleRate) end,
+    OUTPUT_FORMAT      = function(state) return text(state.fields.encListeningFormat) end,
+    OUTPUT_SAMPLE_RATE = function(state) return text(state.fields.encSampleRate) end,
+    VIDEO_RESOLUTION   = function(state) return text(state.fields.videoResolution) end,
+    VIDEO_COLORSPACE   = function(state) return text(state.fields.videoColorSpace) end,
+    VIDEO_HDR          = function(state) return text(state.fields.videoHdr) end,
+    DIRAC_STATE        = function(state) return text(state.fields.diracState) end,
+}
+
+-- Names as fired by C4:FireEvent. tests/test_manifest.lua asserts this list
+-- and driver.xml's <events> block name the same six events, in both
+-- directions, so a declared-but-never-fired (or fired-but-undeclared) event
+-- cannot slip in unnoticed.
+local EVENTS = {
+    CONNECTED             = "Connected",
+    DISCONNECTED          = "Disconnected",
+    POWERED_ON            = "Powered On",
+    POWERED_OFF           = "Powered Off",
+    INPUT_CHANGED         = "Input Changed",
+    SURROUND_MODE_CHANGED = "Surround Mode Changed",
+}
+DRIVER.EVENTS = EVENTS -- for tests; the code below always uses the local.
+
+local function initVariables()
+    DRIVER.varCache = {}
+    local connected = DRIVER.session and DRIVER.session.connected or false
+    for name, fn in pairs(VARIABLES) do
+        local value = fn(DRIVER.state, connected)
+        DRIVER.varCache[name] = value
+        C4:AddVariable(name, value, "STRING")
+    end
+end
+
+-- Writes only what actually moved since the last write: Director sees every
+-- SetVariable, and this driver's stated budget for noise is zero redundant
+-- ones. Recomputing the full table each time -- rather than mapping a changed
+-- field to the one variable it affects -- is what lets this stay a single
+-- source of truth: several variables (VOLUME_PERCENT, INPUT_LABEL) depend on
+-- more than one field, and a hand-maintained field-to-variable map is exactly
+-- the kind of second list that could drift from the first.
+local function updateVariables(connected)
+    for name, fn in pairs(VARIABLES) do
+        local value = fn(DRIVER.state, connected)
+        if DRIVER.varCache[name] ~= value then
+            DRIVER.varCache[name] = value
+            C4:SetVariable(name, value)
+        end
+    end
+end
+
+-- Power, input and surround mode only count as a transition when the PRIOR
+-- value was itself known. The first document turns a nil into a real value
+-- for all three, and that is discovery, not a transition -- the Connected
+-- event above already reports it, so re-announcing it here as e.g. "Powered
+-- On" would be a second, redundant signal for the same moment.
+local function fireStateEvents(changes)
+    local fields = DRIVER.state.fields
+
+    if changes.power then
+        local now = fields.power
+        if DRIVER.prevPower == false and now == true then
+            C4:FireEvent(EVENTS.POWERED_ON)
+        elseif DRIVER.prevPower == true and now == false then
+            C4:FireEvent(EVENTS.POWERED_OFF)
+        end
+        DRIVER.prevPower = now
+    end
+
+    if changes.input then
+        local now = fields.input
+        if DRIVER.prevInput ~= nil and now ~= DRIVER.prevInput then
+            C4:FireEvent(EVENTS.INPUT_CHANGED)
+        end
+        DRIVER.prevInput = now
+    end
+
+    if changes.surroundMode then
+        local now = fields.surroundMode
+        if DRIVER.prevSurroundMode ~= nil and now ~= DRIVER.prevSurroundMode then
+            C4:FireEvent(EVENTS.SURROUND_MODE_CHANGED)
+        end
+        DRIVER.prevSurroundMode = now
+    end
+end
+
+--------------------------------------------------------------------------------
 -- Error handling
 --------------------------------------------------------------------------------
 
@@ -93,7 +225,7 @@ local function buildDriver()
         transport = transport,
         state = state,
         log = log,
-        onChanges = function(changes) DRIVER.proxy:notify(changes) end,
+        onChanges = function(changes) DRIVER.onChanges(changes) end,
         onConnected = function(connected) DRIVER.onConnected(connected) end,
     })
 
@@ -108,16 +240,30 @@ local function buildDriver()
 
     DRIVER.log, DRIVER.state = log, state
     DRIVER.transport, DRIVER.session, DRIVER.proxy = transport, session, proxy
+    DRIVER.prevPower, DRIVER.prevInput, DRIVER.prevSurroundMode = nil, nil, nil
+    initVariables()
 end
 
+-- Connected/Disconnected fire from here, not from the change set: the session
+-- already guarantees onConnected only runs on a genuine transport transition
+-- (see htp1/session.lua), so no further "did this really change" check
+-- belongs here.
 function DRIVER.onConnected(connected)
     C4:UpdateProperty("Connection Status", connected and "Connected" or "Not connected")
+    updateVariables(connected)
+    C4:FireEvent(connected and EVENTS.CONNECTED or EVENTS.DISCONNECTED)
     if not connected then return end
 
     C4:UpdateProperty("System Software Version", DRIVER.state.fields.systemVersion or "")
     C4:UpdateProperty("AV Controller Version", DRIVER.state.fields.avControllerVersion or "")
     C4:UpdateProperty("Serial Number", DRIVER.state.fields.serial or "")
     DRIVER.proxy:announce()
+end
+
+function DRIVER.onChanges(changes)
+    updateVariables(DRIVER.session.connected)
+    fireStateEvents(changes)
+    DRIVER.proxy:notify(changes)
 end
 
 function OnDriverInit()

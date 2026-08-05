@@ -37,15 +37,9 @@ local function loadDriver(overrides, bindingAddress)
     return mock
 end
 
--- Bring the driver to a live, document-loaded state without a real socket.
-local function goLive()
-    OnConnectionStatusChanged(Mapping.NETWORK_BINDING, 80, "ONLINE")
-    local accept = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"
-    ReceivedFromNetwork(Mapping.NETWORK_BINDING, 80, accept)
-
-    local F = require("tests.fixtures")
-    local text = "mso " .. JSON:encode(F.modern())
-    -- Server frames are unmasked, so they are built here without a mask.
+-- Wraps `text` in an unmasked server text frame and delivers it as if it had
+-- arrived on the socket. Server frames are unmasked, so no mask is applied.
+local function sendFrame(text)
     local header = string.char(0x81)
     if #text < 126 then
         header = header .. string.char(#text)
@@ -53,6 +47,40 @@ local function goLive()
         header = header .. string.char(126, math.floor(#text / 256), #text % 256)
     end
     ReceivedFromNetwork(Mapping.NETWORK_BINDING, 80, header .. text)
+end
+
+-- Bring the driver to a live state without a real socket, loaded with `doc`
+-- (F.modern() if omitted).
+local function goLiveWith(doc)
+    OnConnectionStatusChanged(Mapping.NETWORK_BINDING, 80, "ONLINE")
+    local accept = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"
+    ReceivedFromNetwork(Mapping.NETWORK_BINDING, 80, accept)
+    sendFrame("mso " .. JSON:encode(doc))
+end
+
+local function goLive()
+    local F = require("tests.fixtures")
+    goLiveWith(F.modern())
+end
+
+-- Push a single msoupdate operation as if the unit sent it.
+local function pushUpdate(path, value)
+    sendFrame("msoupdate " .. JSON:encode({ { op = "replace", path = path, value = value } }))
+end
+
+local VARIABLE_NAMES = {
+    "CONNECTED", "POWER_STATE", "INPUT_ID", "INPUT_LABEL", "VOLUME_DB", "VOLUME_PERCENT",
+    "MUTED", "SURROUND_MODE", "INPUT_FORMAT", "INPUT_PROGRAM", "INPUT_SAMPLE_RATE",
+    "OUTPUT_FORMAT", "OUTPUT_SAMPLE_RATE", "VIDEO_RESOLUTION", "VIDEO_COLORSPACE",
+    "VIDEO_HDR", "DIRAC_STATE",
+}
+
+local function callsNamed(name)
+    local found = {}
+    for _, c in ipairs(mock.calls) do
+        if c.name == name then table.insert(found, c) end
+    end
+    return found
 end
 
 return {
@@ -227,6 +255,240 @@ return {
             loadDriver()
             math.randomseed = realRandomseed
             H.equal(recordedSeed, 4242, "seeded from the mock's GetDeviceID")
+        end,
+    },
+
+    --------------------------------------------------------------------------
+    -- Variables
+    --------------------------------------------------------------------------
+    {
+        name = "every one of the seventeen variables exists after init, created as STRING",
+        fn = function()
+            loadDriver()
+            local created = {}
+            for _, c in ipairs(callsNamed("AddVariable")) do created[c.args[1]] = c.args[3] end
+            for _, name in ipairs(VARIABLE_NAMES) do
+                H.isTrue(mock.variables[name] ~= nil, name .. " should have been created")
+                H.equal(created[name], "STRING", name .. " should be created as a STRING")
+            end
+            H.equal(#VARIABLE_NAMES, 17, "the brief calls for seventeen variables")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a document populates the variables with correct values, including the computed volume percent",
+        fn = function()
+            loadDriver()
+            goLive()
+            -- vpl -50, vph 0, volume -25: (-25 - -50) / (0 - -50) * 100 = 50.
+            local expected = {
+                CONNECTED = "true",
+                POWER_STATE = "On",
+                INPUT_ID = "h1",
+                INPUT_LABEL = "Streamer",
+                VOLUME_DB = "-25",
+                VOLUME_PERCENT = "50",
+                MUTED = "false",
+                SURROUND_MODE = "Native Dolby ATMOS",
+                INPUT_FORMAT = "Dolby MAT/PCM",
+                INPUT_PROGRAM = "Object Audio",
+                INPUT_SAMPLE_RATE = "48 kHz",
+                OUTPUT_FORMAT = "5.1.2",
+                OUTPUT_SAMPLE_RATE = "48 kHz",
+                VIDEO_RESOLUTION = "3840x2160p60Hz",
+                VIDEO_COLORSPACE = "BT2020",
+                VIDEO_HDR = "HDR10",
+                DIRAC_STATE = "on",
+            }
+            for name, value in pairs(expected) do
+                H.equal(mock.variables[name], value, name)
+            end
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "INPUT_LABEL falls back to the Control4 connection name when the unit reports " ..
+               "none, and to empty when neither exists",
+        fn = function()
+            loadDriver()
+            local F = require("tests.fixtures")
+
+            -- "b" is Mapping.INPUTS' Bluetooth key; F.modern()'s own inputs
+            -- table has no entry for it at all, so the unit has no label to
+            -- offer and the Control4 connection name should be used instead.
+            local doc = F.modern()
+            doc.input = "b"
+            goLiveWith(doc)
+            H.equal(mock.variables.INPUT_ID, "b")
+            H.equal(mock.variables.INPUT_LABEL, "Bluetooth",
+                "no label from the unit, so the Control4 connection name is used")
+
+            -- An input key neither the unit's own inputs table nor
+            -- Mapping.INPUTS knows about (an unmodeled source, invented here).
+            mock.clearCalls()
+            pushUpdate("/input", "xyz")
+            H.equal(mock.variables.INPUT_ID, "xyz")
+            H.equal(mock.variables.INPUT_LABEL, "",
+                "neither the unit nor Mapping.INPUTS knows this key")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "an msoupdate on a single status field updates exactly that variable and no others",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            pushUpdate("/status/DECSampleRate", "96 kHz")
+            local writes = callsNamed("SetVariable")
+            H.count(writes, 1, "only the sample-rate variable should have moved")
+            H.equal(writes[1].args[1], "INPUT_SAMPLE_RATE")
+            H.equal(writes[1].args[2], "96 kHz")
+            H.equal(mock.variables.INPUT_SAMPLE_RATE, "96 kHz")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a redundant push writes no variables and fires no events",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            -- The exact value the unit already reported: state.lua drops this
+            -- before onChanges is even called, so nothing downstream should run.
+            pushUpdate("/status/DECSampleRate", "48 kHz")
+            H.count(callsNamed("SetVariable"), 0)
+            H.count(callsNamed("FireEvent"), 0)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a nil field yields an empty string, never the literal text 'nil'",
+        fn = function()
+            loadDriver()
+            local F = require("tests.fixtures")
+            goLiveWith(F.sparse())   -- { volume = -10, powerIsOn = false }, everything else absent
+
+            for _, name in ipairs(VARIABLE_NAMES) do
+                local value = mock.variables[name]
+                H.equal(type(value), "string", name .. " must always be a string")
+                H.isFalse(value == "nil", name .. " must never be the literal text 'nil'")
+            end
+
+            H.equal(mock.variables.SURROUND_MODE, "")
+            H.equal(mock.variables.INPUT_FORMAT, "")
+            H.equal(mock.variables.INPUT_PROGRAM, "")
+            H.equal(mock.variables.INPUT_SAMPLE_RATE, "")
+            H.equal(mock.variables.OUTPUT_FORMAT, "")
+            H.equal(mock.variables.OUTPUT_SAMPLE_RATE, "")
+            H.equal(mock.variables.VIDEO_RESOLUTION, "")
+            H.equal(mock.variables.VIDEO_COLORSPACE, "")
+            H.equal(mock.variables.VIDEO_HDR, "")
+            H.equal(mock.variables.DIRAC_STATE, "")
+            H.equal(mock.variables.INPUT_ID, "", "input is absent from F.sparse()")
+            H.equal(mock.variables.INPUT_LABEL, "", "no input selected, so no label to show")
+            H.equal(mock.variables.VOLUME_PERCENT, "", "vpl/vph are absent, so no percent can be computed")
+            H.equal(mock.variables.POWER_STATE, "Off", "F.sparse() reports powerIsOn = false")
+            H.equal(mock.variables.MUTED, "false", "muted is absent, never reported as true on trust")
+            H.assertNoErrorLog()
+        end,
+    },
+
+    --------------------------------------------------------------------------
+    -- Events
+    --------------------------------------------------------------------------
+    {
+        name = "the Connected event fires exactly once when the session comes up",
+        fn = function()
+            loadDriver()
+            mock.clearCalls()
+            goLive()
+            local fired = callsNamed("FireEvent")
+            local count = 0
+            for _, c in ipairs(fired) do
+                if c.args[1] == "Connected" then count = count + 1 end
+            end
+            H.equal(count, 1)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "the Disconnected event fires exactly once when the connection drops",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            OnConnectionStatusChanged(Mapping.NETWORK_BINDING, 80, "OFFLINE")
+            local fired = callsNamed("FireEvent")
+            H.count(fired, 1)
+            H.equal(fired[1].args[1], "Disconnected")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "the first document does not fire Powered On, Input Changed or Surround Mode " ..
+               "Changed -- Connected already covers discovering the starting state",
+        fn = function()
+            loadDriver()
+            mock.clearCalls()
+            goLive()
+            local names = {}
+            for _, c in ipairs(callsNamed("FireEvent")) do names[c.args[1]] = true end
+            H.isTrue(names["Connected"], "Connected should fire")
+            H.isFalse(names["Powered On"] or false,
+                "the initial power reading is discovery, not a transition")
+            H.isFalse(names["Input Changed"] or false)
+            H.isFalse(names["Surround Mode Changed"] or false)
+        end,
+    },
+    {
+        name = "Powered Off fires once on a true -> false transition, and Powered On on the way back",
+        fn = function()
+            loadDriver()
+            goLive()   -- power starts true
+
+            mock.clearCalls()
+            pushUpdate("/powerIsOn", false)
+            local firedOff = callsNamed("FireEvent")
+            H.count(firedOff, 1)
+            H.equal(firedOff[1].args[1], "Powered Off")
+            H.equal(mock.variables.POWER_STATE, "Off")
+
+            mock.clearCalls()
+            pushUpdate("/powerIsOn", true)
+            local firedOn = callsNamed("FireEvent")
+            H.count(firedOn, 1)
+            H.equal(firedOn[1].args[1], "Powered On")
+            H.equal(mock.variables.POWER_STATE, "On")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Input Changed fires exactly once when the selected input changes",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            pushUpdate("/input", "h2")
+            local fired = callsNamed("FireEvent")
+            H.count(fired, 1)
+            H.equal(fired[1].args[1], "Input Changed")
+            H.equal(mock.variables.INPUT_ID, "h2")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Surround Mode Changed fires exactly once when the unit's surround mode text changes",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            pushUpdate("/status/SurroundMode", "Dolby Surround")
+            local fired = callsNamed("FireEvent")
+            H.count(fired, 1)
+            H.equal(fired[1].args[1], "Surround Mode Changed")
+            H.equal(mock.variables.SURROUND_MODE, "Dolby Surround")
+            H.assertNoErrorLog()
         end,
     },
 }

@@ -6,7 +6,7 @@
 	<model>HTP-1</model>
 	<created>08/04/2026 12:00</created>
 	<modified>08/04/2026 12:00</modified>
-	<version>101</version>
+	<version>102</version>
 	<auto_update>false</auto_update>
 	<!-- Deliberately empty, overriding the receiver proxy's own roomAutoBind.
 	     That proxy claims AudioSelectionDevice, AudioVolumeDevice,
@@ -377,4 +377,36 @@
 			</classes>
 		</connection>
 	</connections>
+	<events>
+		<event>
+			<id>1</id>
+			<name>Connected</name>
+			<description>Fires when the driver establishes a connection to the unit.</description>
+		</event>
+		<event>
+			<id>2</id>
+			<name>Disconnected</name>
+			<description>Fires when the driver's connection to the unit is lost.</description>
+		</event>
+		<event>
+			<id>3</id>
+			<name>Powered On</name>
+			<description>Fires when the unit's power state transitions from off to on.</description>
+		</event>
+		<event>
+			<id>4</id>
+			<name>Powered Off</name>
+			<description>Fires when the unit's power state transitions from on to off.</description>
+		</event>
+		<event>
+			<id>5</id>
+			<name>Input Changed</name>
+			<description>Fires when the unit's selected input changes.</description>
+		</event>
+		<event>
+			<id>6</id>
+			<name>Surround Mode Changed</name>
+			<description>Fires when the unit's reported surround mode text changes.</description>
+		</event>
+	</events>
 </devicedata>

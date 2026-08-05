@@ -116,6 +116,9 @@ function M.install(properties)
             M.variables[name] = value
             record("SetVariable", { name, value })
         end,
+        FireEvent = function(_, name)
+            record("FireEvent", { name })
+        end,
         ErrorLog = function(_, message)
             record("ErrorLog", { message })
             table.insert(M.printed, "ErrorLog: " .. tostring(message))
