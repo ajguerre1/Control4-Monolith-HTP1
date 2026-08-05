@@ -520,6 +520,48 @@ return {
         end,
     },
     {
+        name = "a /cal replace carrying slots re-derives the slot names",
+        fn = function()
+            -- The inputs collection has this test for its own container; the
+            -- slots collection was relying on the code reading correctly.
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.diracSlots[1].name, "Calibrated")
+            local changes = s:applyOps({
+                { op = "replace", path = "/cal", value = {
+                    vpl = -50, vph = 0, currentdiracslot = 2, lipsync = 40,
+                    slots = { { name = "Room A" }, { name = "Room B" }, { name = "" },
+                              { name = "Movie" }, { name = "Music" }, { name = "Custom" } },
+                } },
+            })
+            H.equal(s.diracSlots[1].name, "Room A", "slot names follow a /cal replace")
+            H.equal(s.diracSlots[2].name, "Room B")
+            H.isTrue(changes.diracSlots, "and the change is reported")
+            H.equal(s.fields.diracSlot, 2, "the scalars under /cal re-derive too")
+            H.equal(s.fields.lipSync, 40)
+        end,
+    },
+    {
+        name = "a replace of the slots array alone is accepted",
+        fn = function()
+            -- Permissive inbound parsing. If the unit never pushes at this
+            -- granularity the branch never runs; if it does, the names stay
+            -- live rather than going stale until the next full document.
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/cal/slots", value = {
+                    { name = "First" }, { name = "Second" }, { name = "" },
+                    { name = "Movie" }, { name = "Music" }, { name = "Custom" },
+                } },
+            })
+            H.equal(s.diracSlots[1].name, "First")
+            H.equal(s.diracSlots[2].name, "Second")
+            H.isTrue(changes.diracSlots)
+            H.equal(s.fields.vpl, -50, "nothing else under /cal was disturbed")
+        end,
+    },
+    {
         name = "Dirac filter slot names project, including an unnamed slot",
         fn = function()
             local s = State.new()

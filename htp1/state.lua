@@ -176,6 +176,13 @@ function State:_applyContainer(prefix, value, changes)
         slots = value.cal and value.cal.slots
     elseif prefix == "/cal" then
         slots = value.slots
+    elseif prefix == "/cal/slots" then
+        -- Accepting a replace of the array on its own is permissive INBOUND
+        -- parsing, which is a different risk class from guessing an outbound
+        -- call shape: if the unit never pushes at this granularity the branch
+        -- simply never runs, and if it does, the slot names stay live instead
+        -- of going stale until the next full document.
+        slots = value
     end
     if slots and self:_setDiracSlots(slots) then changes.diracSlots = true end
 
@@ -201,7 +208,8 @@ end
 -- path equals "/status" exactly, so a targeted push there is dropped before
 -- any allocation. Tracking it wildcard-style would undo the entire reason
 -- this driver projects rather than mirrors the ~38 KB document.
-local CONTAINER_PREFIXES = { "/cal", "/upmix", "/versions", "/inputs", "/status", "/videostat" }
+local CONTAINER_PREFIXES = { "/cal", "/cal/slots", "/upmix", "/versions", "/inputs",
+                             "/status", "/videostat" }
 
 -- True when `path` is a tracked scalar, a tracked input sub-path, or a container
 -- holding either. Checked before any allocation, so the thousands of paths this
