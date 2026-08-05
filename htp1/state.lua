@@ -60,19 +60,29 @@ function State:_assign(field, value)
     return true
 end
 
+-- A field absent from a pushed entry is UNSPECIFIED, not cleared.
+--
+-- This loop already treats a container replace as a per-key merge: inputs the
+-- push does not mention are left alone. Clearing a field that a mentioned entry
+-- happens to omit would contradict that at the level below, and a partial
+-- `/inputs` replace would silently wipe a label the installer had set -- with a
+-- change notification indistinguishable from a genuine rename.
 function State:_setInputs(inputs)
     if type(inputs) ~= "table" then return false end
     local changed = false
     for key, entry in pairs(inputs) do
         if type(entry) == "table" then
             local current = self.inputs[key]
-            local label   = entry.label
-            local visible = entry.visible
             if not current then
-                self.inputs[key] = { label = label, visible = visible }
+                current = {}
+                self.inputs[key] = current
+            end
+            if entry.label ~= nil and current.label ~= entry.label then
+                current.label = entry.label
                 changed = true
-            elseif current.label ~= label or current.visible ~= visible then
-                current.label, current.visible = label, visible
+            end
+            if entry.visible ~= nil and current.visible ~= entry.visible then
+                current.visible = entry.visible
                 changed = true
             end
         end
@@ -125,7 +135,8 @@ local CONTAINER_PREFIXES = { "/cal", "/upmix", "/versions", "/inputs" }
 
 -- True when `path` is a tracked scalar, a tracked input sub-path, or a container
 -- holding either. Checked before any allocation, so the thousands of paths this
--- driver ignores cost one string compare each.
+-- driver ignores cost a hash lookup, at most two anchored matches and a few
+-- equality tests -- no allocation, so a busy device stays cheap.
 local function isInteresting(path)
     if SCALAR_PATHS[path] then return "scalar" end
     if path == "" or path == "/" then return "container" end

@@ -283,6 +283,33 @@ return {
         end,
     },
     {
+        name = "a partial container replace does not wipe fields it omits",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.inputs.h1.label, "Streamer")
+            -- The loop already leaves untouched any input the push does not
+            -- mention; a field omitted from a mentioned entry is unspecified
+            -- for the same reason, not an instruction to clear it.
+            s:applyOps({
+                { op = "replace", path = "/inputs", value = { h1 = { visible = false } } },
+            })
+            H.equal(s.inputs.h1.label, "Streamer", "the label survives")
+            H.equal(s.inputs.h1.visible, false, "the stated field still applies")
+            H.equal(s.inputs.h2.label, "Console", "an unmentioned input is untouched")
+        end,
+    },
+    {
+        name = "removing one input leaf leaves its sibling alone",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            s:applyOps({ { op = "remove", path = "/inputs/h1/label" } })
+            H.equal(s.inputs.h1.label, nil, "the named leaf is cleared")
+            H.equal(s.inputs.h1.visible, true, "its sibling is not")
+        end,
+    },
+    {
         name = "a single operation sent unwrapped is accepted",
         fn = function()
             -- The web UI's own client handles a non-array msoupdate, so the unit
