@@ -18,8 +18,14 @@ local SCALAR_PATHS = {
     ["/powerAction"]                = "powerAction",
     ["/input"]                      = "input",
     ["/upmix/select"]               = "upmix",
+    ["/loudness"]                   = "loudness",
+    ["/night"]                      = "night",
+    ["/dialogEnh"]                  = "dialogEnhance",
+    ["/bassenhance"]                = "bassEnhance",
     ["/cal/vpl"]                    = "vpl",
     ["/cal/vph"]                    = "vph",
+    ["/cal/currentdiracslot"]       = "diracSlot",
+    ["/cal/lipsync"]                = "lipSync",
     ["/unitname"]                   = "unitName",
     ["/versions/avController"]      = "avControllerVersion",
     ["/versions/swVer"]             = "systemVersion",
@@ -63,7 +69,7 @@ local function resolve(container, pointer)
 end
 
 function State.new()
-    return setmetatable({ loaded = false, fields = {}, inputs = {} }, State)
+    return setmetatable({ loaded = false, fields = {}, inputs = {}, diracSlots = {} }, State)
 end
 
 function State:inputLabel(key)
@@ -110,6 +116,33 @@ function State:_setInputs(inputs)
     return changed
 end
 
+-- Six fixed Dirac filter slots, each with a name the owner may have set on the
+-- unit -- site data the driver only ever passes through, never invents. Kept as
+-- an array in the order the unit reports them: `cal.slots` is a 0-indexed array
+-- on the wire and `/cal/currentdiracslot` is a 0-based index into it, so Lua's
+-- 1-based array preserves that correspondence (slot 0 lands at diracSlots[1]).
+--
+-- A slot with an empty or absent name still gets an entry. Dropping it would
+-- misalign the array against `currentdiracslot`, and the M3-T3 slot picker
+-- needs a row to fall back to "Slot N" for, not a hole.
+function State:_setDiracSlots(slots)
+    if type(slots) ~= "table" then return false end
+    local changed = false
+    for i, entry in ipairs(slots) do
+        local name = (type(entry) == "table") and entry.name or nil
+        local current = self.diracSlots[i]
+        if not current then
+            current = {}
+            self.diracSlots[i] = current
+        end
+        if current.name ~= name then
+            current.name = name
+            changed = true
+        end
+    end
+    return changed
+end
+
 -- Re-derive every tracked path that lives under `prefix` from `value`.
 -- `prefix` of "" means the whole document.
 function State:_applyContainer(prefix, value, changes)
@@ -137,6 +170,14 @@ function State:_applyContainer(prefix, value, changes)
         inputs = value
     end
     if inputs and self:_setInputs(inputs) then changes.inputs = true end
+
+    local slots
+    if prefix == "" then
+        slots = value.cal and value.cal.slots
+    elseif prefix == "/cal" then
+        slots = value.slots
+    end
+    if slots and self:_setDiracSlots(slots) then changes.diracSlots = true end
 
     return changes
 end

@@ -40,7 +40,21 @@ function F.modern()
             dolby = { cs = false, homevis = true },
             dts   = { ws = true,  homevis = true },
         },
-        cal = { vpl = -50, vph = 0, zeroPoint = 0, diracactive = "on", currentdiracslot = 0 },
+        cal = {
+            vpl = -50, vph = 0, zeroPoint = 0, diracactive = "on", currentdiracslot = 0,
+            lipsync = 20,
+            -- Six fixed filter slots. Names are site data on a real unit --
+            -- every name here is invented, and one is left empty on purpose to
+            -- prove an unnamed slot still gets a row rather than being dropped.
+            slots = {
+                { name = "Calibrated" },
+                { name = "Flat" },
+                { name = "" },
+                { name = "Movie" },
+                { name = "Music" },
+                { name = "Custom" },
+            },
+        },
         inputs = baseInputs(),
         -- swVer is the release the unit calls itself; avController is an internal
         -- component on its own numbering. Both are reported, and they never match.
@@ -80,7 +94,21 @@ function F.legacy()
         input = "h1",
         unitname = "Processor",
         upmix = { select = "dolby", dolby = { cs = false }, dts = { ws = true } },
-        cal = { vpl = -50, vph = 0, zeroPoint = 0, diracactive = "off", currentdiracslot = 1 },
+        cal = {
+            vpl = -50, vph = 0, zeroPoint = 0, diracactive = "off", currentdiracslot = 1,
+            lipsync = 0,
+            -- Same invented-name rule as the modern fixture; here the unnamed
+            -- slot omits the `name` key entirely, to prove absence and an empty
+            -- string are both tolerated.
+            slots = {
+                { name = "Slot 1" },
+                {},
+                { name = "Flat" },
+                { name = "Movie" },
+                { name = "Music" },
+                { name = "Custom" },
+            },
+        },
         inputs = baseInputs(),
         versions = { avController = "4.91 Built Dec 23 2024, 11:23:51\n", swVer = "V1.13.3",
                      SerialNumber = "0002" },

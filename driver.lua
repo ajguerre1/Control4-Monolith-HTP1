@@ -107,6 +107,14 @@ local VARIABLES = {
     VIDEO_COLORSPACE   = function(state) return text(state.fields.videoColorSpace) end,
     VIDEO_HDR          = function(state) return text(state.fields.videoHdr) end,
     DIRAC_STATE        = function(state) return text(state.fields.diracState) end,
+    -- Control for all six arrives in later M3 tasks; these are read-only
+    -- projections of what the unit already pushes, same as DIRAC_STATE above.
+    LOUDNESS           = function(state) return text(state.fields.loudness) end,
+    NIGHT_MODE         = function(state) return text(state.fields.night) end,
+    DIALOG_ENHANCE     = function(state) return text(state.fields.dialogEnhance) end,
+    BASS_ENHANCE       = function(state) return text(state.fields.bassEnhance) end,
+    DIRAC_SLOT         = function(state) return text(state.fields.diracSlot) end,
+    LIP_SYNC_MS        = function(state) return text(state.fields.lipSync) end,
 }
 
 -- Names as fired by C4:FireEvent. tests/test_manifest.lua asserts this list
@@ -142,7 +150,7 @@ local function initVariables()
         --
         -- Isolated because this loop runs under pairs(), whose order is
         -- unspecified: one failure without a pcall would abort it partway and
-        -- leave an arbitrary, reload-varying subset of the seventeen created,
+        -- leave an arbitrary, reload-varying subset of the created variables,
         -- while varCache claimed all of them existed. It would also skip the
         -- Driver Version update below, so a successful install would still
         -- report the old version in Composer.

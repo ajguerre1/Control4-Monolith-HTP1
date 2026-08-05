@@ -460,4 +460,92 @@ return {
             H.equal(s.fields.raw, nil)
         end,
     },
+
+    --------------------------------------------------------------------------
+    -- Processing settings: loudness, night, dialog enhance, bass enhance,
+    -- dirac slot, lip sync -- and the dirac filter slot names.
+    --------------------------------------------------------------------------
+    {
+        name = "applying a modern document projects every processing field",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.fields.loudness, "off")
+            H.equal(s.fields.night, "off")
+            H.equal(s.fields.dialogEnhance, 3)
+            H.equal(s.fields.bassEnhance, "off")
+            H.equal(s.fields.diracSlot, 0)
+            H.equal(s.fields.lipSync, 20)
+        end,
+    },
+    {
+        name = "a targeted update on one processing field updates only that field",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({ { op = "replace", path = "/night", value = "auto" } })
+            H.equal(s.fields.night, "auto")
+            H.equal(next(changes), "night")
+            H.equal(s.fields.loudness, "off", "siblings are untouched")
+            H.equal(s.fields.dialogEnhance, 3, "siblings are untouched")
+        end,
+    },
+    {
+        name = "replacing the /cal container re-derives diracSlot and lipSync",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/cal", value = {
+                    vpl = -50, vph = 0, zeroPoint = 0, diracactive = "on",
+                    currentdiracslot = 5, lipsync = 120,
+                } },
+            })
+            H.equal(s.fields.diracSlot, 5)
+            H.equal(s.fields.lipSync, 120)
+            H.isTrue(changes.diracSlot and changes.lipSync)
+        end,
+    },
+    {
+        name = "a sparse document leaves the six processing fields nil rather than inventing a value",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.sparse())
+            H.equal(s.fields.loudness, nil)
+            H.equal(s.fields.night, nil)
+            H.equal(s.fields.dialogEnhance, nil)
+            H.equal(s.fields.bassEnhance, nil)
+            H.equal(s.fields.diracSlot, nil)
+            H.equal(s.fields.lipSync, nil)
+        end,
+    },
+    {
+        name = "Dirac filter slot names project, including an unnamed slot",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.diracSlots[1].name, "Calibrated")
+            H.equal(s.diracSlots[2].name, "Flat")
+            H.equal(s.diracSlots[3].name, "", "an empty name still gets a row")
+            H.equal(s.diracSlots[6].name, "Custom")
+        end,
+    },
+    {
+        name = "an absent slot name (the key itself missing) still gets a row",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.legacy())
+            H.equal(s.diracSlots[1].name, "Slot 1")
+            H.equal(s.diracSlots[2].name, nil, "no name key at all, but the slot still exists")
+            H.isTrue(s.diracSlots[2] ~= nil, "the entry itself must not be dropped")
+        end,
+    },
+    {
+        name = "a sparse document has no dirac slots to report",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.sparse())
+            H.equal(next(s.diracSlots), nil)
+        end,
+    },
 }

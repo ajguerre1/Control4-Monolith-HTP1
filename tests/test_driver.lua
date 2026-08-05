@@ -73,6 +73,7 @@ local VARIABLE_NAMES = {
     "MUTED", "SURROUND_MODE", "INPUT_FORMAT", "INPUT_PROGRAM", "INPUT_SAMPLE_RATE",
     "OUTPUT_FORMAT", "OUTPUT_SAMPLE_RATE", "VIDEO_RESOLUTION", "VIDEO_COLORSPACE",
     "VIDEO_HDR", "DIRAC_STATE",
+    "LOUDNESS", "NIGHT_MODE", "DIALOG_ENHANCE", "BASS_ENHANCE", "DIRAC_SLOT", "LIP_SYNC_MS",
 }
 
 local function callsNamed(name)
@@ -426,7 +427,7 @@ return {
     -- Variables
     --------------------------------------------------------------------------
     {
-        name = "every one of the seventeen variables exists after init, created as STRING",
+        name = "every one of the twenty-three variables exists after init, created as STRING",
         fn = function()
             loadDriver()
             local created = {}
@@ -442,7 +443,7 @@ return {
                 -- could read wrong indefinitely.
                 H.equal(mock.variableReadOnly[name], true, name .. " should be read-only")
             end
-            H.equal(#VARIABLE_NAMES, 17, "the brief calls for seventeen variables")
+            H.equal(#VARIABLE_NAMES, 23, "the brief calls for twenty-three variables")
 
             -- The reverse direction: an eighteenth variable added to driver.lua
             -- would otherwise ship with nothing asserting it exists at all.
@@ -482,6 +483,12 @@ return {
                 VIDEO_COLORSPACE = "BT2020",
                 VIDEO_HDR = "HDR10",
                 DIRAC_STATE = "on",
+                LOUDNESS = "off",
+                NIGHT_MODE = "off",
+                DIALOG_ENHANCE = "3",
+                BASS_ENHANCE = "off",
+                DIRAC_SLOT = "0",
+                LIP_SYNC_MS = "20",
             }
             for name, value in pairs(expected) do
                 H.equal(mock.variables[name], value, name)
@@ -532,6 +539,38 @@ return {
         end,
     },
     {
+        name = "a targeted push on one processing field updates only that variable",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            pushUpdate("/dialogEnh", 5)
+            local writes = callsNamed("SetVariable")
+            H.count(writes, 1, "only DIALOG_ENHANCE should have moved")
+            H.equal(writes[1].args[1], "DIALOG_ENHANCE")
+            H.equal(writes[1].args[2], "5")
+            H.equal(mock.variables.DIALOG_ENHANCE, "5")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a /cal container replace re-derives DIRAC_SLOT and LIP_SYNC_MS and nothing else",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            sendFrame("msoupdate " .. JSON:encode({
+                { op = "replace", path = "/cal", value = {
+                    vpl = -50, vph = 0, zeroPoint = 0, diracactive = "on",
+                    currentdiracslot = 4, lipsync = 90,
+                } },
+            }))
+            H.equal(mock.variables.DIRAC_SLOT, "4")
+            H.equal(mock.variables.LIP_SYNC_MS, "90")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
         name = "a redundant push writes no variables and fires no events",
         fn = function()
             loadDriver()
@@ -568,6 +607,12 @@ return {
             H.equal(mock.variables.VIDEO_COLORSPACE, "")
             H.equal(mock.variables.VIDEO_HDR, "")
             H.equal(mock.variables.DIRAC_STATE, "")
+            H.equal(mock.variables.LOUDNESS, "", "loudness is absent from F.sparse()")
+            H.equal(mock.variables.NIGHT_MODE, "")
+            H.equal(mock.variables.DIALOG_ENHANCE, "")
+            H.equal(mock.variables.BASS_ENHANCE, "")
+            H.equal(mock.variables.DIRAC_SLOT, "")
+            H.equal(mock.variables.LIP_SYNC_MS, "")
             H.equal(mock.variables.INPUT_ID, "", "input is absent from F.sparse()")
             H.equal(mock.variables.INPUT_LABEL, "", "no input selected, so no label to show")
             H.equal(mock.variables.VOLUME_PERCENT, "", "vpl/vph are absent, so no percent can be computed")
