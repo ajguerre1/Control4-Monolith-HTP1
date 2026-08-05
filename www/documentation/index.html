@@ -71,9 +71,10 @@
   <li>Mute</li>
   <li>Loudness on, off and toggle, from the room's own control</li>
   <li>Dirac, night mode, dialog and bass enhancement, lip sync</li>
+  <li>Dirac filter slot selection, by the unit's own slot names</li>
   <li>Listening mode across all seven upmixers</li>
-  <li>Programming commands for Dirac Live, night mode, dialog and bass enhancement, and lip sync
-      delay</li>
+  <li>Programming commands for Dirac Live, night mode, dialog and bass enhancement, lip sync
+      delay, and the Dirac filter slot</li>
   <li>Read-only status: formats, sample rates, video</li>
   <li>Driver events for programming</li>
   <li>Unattended reconnection</li>
@@ -155,6 +156,15 @@
         off again, so a driver left in debug cannot quietly fill the log. Faults are always logged
         regardless of this setting.</td>
   </tr>
+  <tr>
+    <td class="name">Dirac Filter</td>
+    <td>The unit's own six slot names, refreshed automatically</td>
+    <td>Selects the active Dirac filter slot. Each entry reads
+        <code>&lt;slot number&gt; - &lt;name&gt;</code>, using the same number as the
+        <code>DIRAC_SLOT</code> variable, so a slot the owner never named still appears as, e.g.,
+        <code>2 - Slot 2</code> rather than being left out. The list and the current selection
+        update on their own whenever the unit reports a change, from any source.</td>
+  </tr>
 </table>
 
 <h2>Actions</h2>
@@ -200,6 +210,10 @@
       <td>Sets the lip sync delay, both the calibration value and the currently selected input's own
           delay -- matching what the unit's own web client does, so the unit's display and the driver
           agree.</td></tr>
+  <tr><td class="name">Set Dirac Slot</td><td class="mono">Slot: 0&ndash;5</td>
+      <td>Selects the active Dirac filter slot by number, for programming that knows the slot it
+          wants rather than its name. The <strong>Dirac Filter</strong> property above is the way to
+          choose one by name from Composer.</td></tr>
 </table>
 <div class="note">
   <strong>An out-of-range or unrecognised value is refused, not passed through.</strong>
@@ -235,7 +249,7 @@
   <tr><td class="name">NIGHT_MODE</td><td><code>off</code> / <code>auto</code> / <code>on</code> — set with the <strong>Set Night Mode</strong> command</td></tr>
   <tr><td class="name">DIALOG_ENHANCE</td><td>0&ndash;6, e.g. <code>3</code> — set with the <strong>Set Dialog Enhance</strong> command</td></tr>
   <tr><td class="name">BASS_ENHANCE</td><td><code>off</code> / <code>on</code> — set with the <strong>Set Bass Enhance</strong> or <strong>Toggle Bass Enhance</strong> commands</td></tr>
-  <tr><td class="name">DIRAC_SLOT</td><td>The unit's index into its six Dirac filter slots, e.g. <code>0</code> — read-only here; control arrives in a later release</td></tr>
+  <tr><td class="name">DIRAC_SLOT</td><td>The unit's index into its six Dirac filter slots, e.g. <code>0</code> — set with the <strong>Dirac Filter</strong> property or the <strong>Set Dirac Slot</strong> command</td></tr>
   <tr><td class="name">LIP_SYNC_MS</td><td>Lip-sync delay in milliseconds, 0&ndash;340, e.g. <code>20</code> — set with the <strong>Set Lip Sync Delay</strong> command</td></tr>
 </table>
 <div class="note">

@@ -109,6 +109,15 @@ function M.install(properties)
             M.properties[name] = value
             record("UpdateProperty", { name, value })
         end,
+        -- The DYNAMIC_LIST equivalent: `items` is a comma-separated string, not
+        -- a table, and `selected` is the entry text to show as chosen. The mock
+        -- treats the selected entry as the property's current value, same as
+        -- UpdateProperty above, so a test can read Properties[name] straight
+        -- back and OnPropertyChanged(name) sees what Composer would show.
+        UpdatePropertyList = function(_, name, items, selected)
+            M.properties[name] = selected
+            record("UpdatePropertyList", { name, items, selected })
+        end,
         AddVariable = function(_, name, value, kind, readOnly)
             M.variables[name] = value
             M.variableReadOnly[name] = readOnly

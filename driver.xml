@@ -121,6 +121,15 @@
 				<default>Off</default>
 				<readonly>false</readonly>
 			</property>
+			<!-- No <items>: a DYNAMIC_LIST is populated at runtime with
+			     C4:UpdatePropertyList, from the slot names the unit itself
+			     reports, not a fixed list declared here. -->
+			<property>
+				<name>Dirac Filter</name>
+				<type>DYNAMIC_LIST</type>
+				<default></default>
+				<readonly>false</readonly>
+			</property>
 		</properties>
 		<actions>
 			<action>
@@ -206,6 +215,21 @@
 						<type>RANGED_INTEGER</type>
 						<minimum>0</minimum>
 						<maximum>340</maximum>
+					</param>
+				</params>
+			</command>
+			<!-- For programming that wants a slot by number; an installer using
+			     Composer selects one by name through the Dirac Filter property
+			     instead. -->
+			<command>
+				<name>Set Dirac Slot</name>
+				<description>Set NAME's Dirac Live filter slot to PARAM1.</description>
+				<params>
+					<param>
+						<name>Slot</name>
+						<type>RANGED_INTEGER</type>
+						<minimum>0</minimum>
+						<maximum>5</maximum>
 					</param>
 				</params>
 			</command>

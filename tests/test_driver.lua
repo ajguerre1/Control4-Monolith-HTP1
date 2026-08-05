@@ -939,6 +939,20 @@ return {
         end,
     },
     {
+        name = "Set Dirac Slot writes /cal/currentdiracslot as a number, from a string parameter",
+        fn = function()
+            loadDriver()
+            goLive()   -- F.modern() starts on wire slot 0
+            mock.clearCalls()
+            ExecuteCommand("Set Dirac Slot", { Slot = "4" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/cal/currentdiracslot")
+            H.equal(ops[1].value, 4)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
         name = "an out-of-range or unrecognised command parameter is refused: a log line, no write",
         fn = function()
             loadDriver({ ["Debug Mode"] = "On" })
@@ -954,6 +968,9 @@ return {
                 { "Set Lip Sync Delay", { Delay = "341" } },
                 { "Set Lip Sync Delay", { Delay = "-1" } },
                 { "Set Lip Sync Delay", { Delay = "not a number" } },
+                { "Set Dirac Slot",     { Slot = "6" } },
+                { "Set Dirac Slot",     { Slot = "-1" } },
+                { "Set Dirac Slot",     { Slot = "not a number" } },
             }
             for _, case in ipairs(cases) do
                 local name, params = case[1], case[2]
@@ -969,6 +986,113 @@ return {
                 H.isTrue(logged, name .. " should have logged the rejection")
                 H.assertNoErrorLog()
             end
+        end,
+    },
+
+    --------------------------------------------------------------------------
+    -- Dirac Filter picker
+    --------------------------------------------------------------------------
+    {
+        name = "the Dirac Filter list is populated from the unit's own slot names, in wire " ..
+               "order, with the current slot selected",
+        fn = function()
+            loadDriver()
+            goLive()   -- F.modern(): Calibrated/Flat/""/Movie/Music/Custom, slot 0 selected
+            local calls = callsNamed("UpdatePropertyList")
+            H.isTrue(#calls >= 1, "the property should have been populated on the first document")
+            local last = calls[#calls]
+            H.equal(last.args[1], "Dirac Filter")
+            H.equal(last.args[2],
+                "0 - Calibrated,1 - Flat,2 - Slot 2,3 - Movie,4 - Music,5 - Custom",
+                "wire order, comma-separated, the unnamed slot falling back to its own number")
+            H.equal(last.args[3], "0 - Calibrated", "wire slot 0 is the unit's current selection")
+            H.equal(Properties["Dirac Filter"], "0 - Calibrated")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a slot the unit left unnamed still appears in the list, and can be the selection",
+        fn = function()
+            loadDriver()
+            local F = require("tests.fixtures")
+            -- F.legacy(): wire slot 1 has no `name` key at all; currentdiracslot = 1.
+            goLiveWith(F.legacy())
+            local calls = callsNamed("UpdatePropertyList")
+            local last = calls[#calls]
+            H.equal(last.args[2],
+                "0 - Slot 1,1 - Slot 1,2 - Flat,3 - Movie,4 - Music,5 - Custom",
+                "wire slot 0's real invented name happens to read 'Slot 1' too; wire slot 1 is " ..
+                "the unnamed fallback -- the leading index keeps the two apart")
+            H.equal(last.args[3], "1 - Slot 1", "the unit's current slot has no name either")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "selecting a Dirac Filter entry writes the matching integer slot",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            Properties["Dirac Filter"] = "3 - Movie"
+            OnPropertyChanged("Dirac Filter")
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/cal/currentdiracslot")
+            H.equal(ops[1].value, 3)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "selecting the entry for wire index 2 writes 2, not 1 or 3",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            Properties["Dirac Filter"] = "2 - Slot 2"
+            OnPropertyChanged("Dirac Filter")
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/cal/currentdiracslot")
+            H.equal(ops[1].value, 2, "wire index 2 must write 2, not an off-by-one neighbour")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "selecting the entry already selected writes nothing",
+        fn = function()
+            -- The direct case of the feedback-loop guard: choosing the slot the
+            -- unit already reports is indistinguishable from Composer replaying
+            -- the driver's own selection back, so both must be silent.
+            loadDriver()
+            goLive()   -- F.modern() starts on wire slot 0
+            mock.clearCalls()
+            Properties["Dirac Filter"] = "0 - Calibrated"
+            OnPropertyChanged("Dirac Filter")
+            mock.advance(50)
+            H.equal(lastWrittenOps(), nil, "already the unit's current slot; nothing to write")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a push from the unit updates the Dirac Filter property and writes nothing back",
+        fn = function()
+            -- The loop this guards against: the driver writes the slot, the
+            -- unit echoes it back as a push, the push repopulates the property
+            -- via UpdatePropertyList, and Composer may report that repopulation
+            -- as its own property change. None of that may turn into a second
+            -- write.
+            loadDriver()
+            goLive()   -- F.modern() starts on wire slot 0
+            mock.clearCalls()
+            pushUpdate("/cal/currentdiracslot", 3)
+            H.equal(Properties["Dirac Filter"], "3 - Movie",
+                "the property should reflect the unit's own push")
+
+            -- Composer replaying the driver's own UpdatePropertyList call.
+            OnPropertyChanged("Dirac Filter")
+            mock.advance(50)
+            H.equal(lastWrittenOps(), nil, "nothing should be written back to the unit")
+            H.assertNoErrorLog()
         end,
     },
 }

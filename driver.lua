@@ -222,6 +222,48 @@ local function fireStateEvents(changes)
 end
 
 --------------------------------------------------------------------------------
+-- Dirac Filter picker
+--------------------------------------------------------------------------------
+
+-- One label per slot, in the order C4:UpdatePropertyList wants: a comma-
+-- separated string, not a table. Labelled by the WIRE index (0-based) rather
+-- than diracSlots' 1-based Lua position, so the number an installer sees here
+-- is the same number DIRAC_SLOT reports and /cal/currentdiracslot uses -- no
+-- translation for anyone comparing the two.
+local function diracFilterEntry(wireIndex, name)
+    if name ~= nil and name ~= "" then
+        return wireIndex .. " - " .. name
+    end
+    return wireIndex .. " - Slot " .. wireIndex
+end
+
+-- Returns the full comma-separated item list and the text of the entry
+-- matching state.fields.diracSlot (nil if the current slot is unknown or out
+-- of range).
+local function diracFilterItems()
+    local items, selectedText = {}, nil
+    local selectedSlot = DRIVER.state.fields.diracSlot
+    for i, entry in ipairs(DRIVER.state.diracSlots) do
+        local wireIndex = i - 1
+        local text = diracFilterEntry(wireIndex, entry.name)
+        table.insert(items, text)
+        if selectedSlot == wireIndex then selectedText = text end
+    end
+    return items, selectedText
+end
+
+-- Repopulates the whole list rather than editing one entry: UpdatePropertyList
+-- always wants the complete set, so "a name changed" and "the selection
+-- changed" are the same call. Called from onChanges below whenever
+-- changes.diracSlots or changes.diracSlot fires -- which includes the first
+-- document, since both start out empty/nil.
+local function updateDiracFilterProperty()
+    local items, selectedText = diracFilterItems()
+    if #items == 0 then return end -- nothing reported yet; leave the property alone
+    C4:UpdatePropertyList("Dirac Filter", table.concat(items, ","), selectedText or "")
+end
+
+--------------------------------------------------------------------------------
 -- Error handling
 --------------------------------------------------------------------------------
 
@@ -337,6 +379,15 @@ function DRIVER.onChanges(changes)
         updateVariables(DRIVER.session.connected)
         fireStateEvents(changes)
     end)
+
+    -- Its own guard, behind the same reasoning as the variables block above: a
+    -- fault repopulating the Composer property must not be able to take the
+    -- proxy or the variables down with it.
+    guard("dirac filter property", function()
+        if changes.diracSlots or changes.diracSlot then
+            updateDiracFilterProperty()
+        end
+    end)
 end
 
 function OnDriverInit()
@@ -371,6 +422,29 @@ local PROPERTY_HANDLERS = {
     end,
     ["Volume Ramp Rate"] = function(value) DRIVER.proxy:setRampMs(parseRampMs(value)) end,
     ["Power Off Action"] = function(value) DRIVER.proxy:setPowerOffAction(value) end,
+    -- Composer delivers the selected entry's full text, "<wire index> - <name>",
+    -- not a bare number -- parse the LEADING DIGITS with a pattern, not a single
+    -- character: a one-character parse silently breaks from slot 10 up, and
+    -- while this unit only has six slots today, that bug is not worth carrying
+    -- into whichever driver copies this shape next.
+    ["Dirac Filter"] = function(value)
+        local slot = tonumber((value or ""):match("^(%d+)"))
+        if not slot then
+            DRIVER.log:debug("Dirac Filter: could not parse a slot index from", tostring(value))
+            return
+        end
+        if DRIVER.state.fields.diracSlot == slot then
+            -- GUARDS THE FEEDBACK LOOP. This handler cannot tell an installer's
+            -- own selection apart from Composer echoing back the driver's own
+            -- updateDiracFilterProperty() call (the unit's push repopulating
+            -- the list is exactly that call) -- both arrive here the same way.
+            -- What distinguishes a real request is that it asks for a slot
+            -- other than the one the unit already reports. Same shape as the
+            -- volume "already there" guard in htp1/proxy.lua's _setVolumeDb.
+            return
+        end
+        DRIVER.session:write("/cal/currentdiracslot", slot)
+    end,
 }
 
 function OnPropertyChanged(name)
@@ -502,6 +576,20 @@ PROGRAMMING_COMMANDS["Set Lip Sync Delay"] = function(params)
     if input ~= nil then
         DRIVER.session:write("/inputs/" .. input .. "/delay", delay)
     end
+end
+
+-- For programming that wants a slot by number. No already-there guard here,
+-- unlike the "Dirac Filter" property handler above: a programming command is
+-- always an explicit ask, never Composer echoing the driver's own write back,
+-- so it writes unconditionally -- the same convention every other command in
+-- this table already follows.
+PROGRAMMING_COMMANDS["Set Dirac Slot"] = function(params)
+    local slot = tonumber(params.Slot)
+    if not slot or slot < 0 or slot > 5 then
+        DRIVER.log:debug("Set Dirac Slot: Slot out of range 0-5:", tostring(params.Slot))
+        return
+    end
+    DRIVER.session:write("/cal/currentdiracslot", slot)
 end
 
 -- Names only, for the manifest test's coverage check -- same pattern as
