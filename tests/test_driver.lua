@@ -769,6 +769,26 @@ return {
     -- Programming commands
     --------------------------------------------------------------------------
     {
+        name = "a mode command with no parameter at all writes nothing",
+        fn = function()
+            -- Control4 should always supply a declared param, but a command
+            -- invoked from a hand-written program or a malformed call must not
+            -- reach the unit with a nil mode.
+            loadDriver()
+            goLive()
+            for _, command in ipairs({ "Set Dirac", "Set Night Mode", "Set Bass Enhance" }) do
+                mock.clearCalls()
+                ExecuteCommand(command, {})
+                mock.advance(50)
+                for _, raw in ipairs(mock.sent) do
+                    H.isTrue(raw:find("changemso", 1, true) == nil,
+                        command .. " with no parameter must not write")
+                end
+            end
+            H.assertNoErrorLog()
+        end,
+    },
+    {
         name = "every command declared in driver.xml has a handler",
         fn = function()
             -- Mirrors the actions-coverage test above, but for <commands>: a
@@ -779,11 +799,18 @@ return {
             local xml = handle:read("*a")
             handle:close()
 
+            -- Scoped to the <commands> block on purpose. An unscoped search for
+            -- <command> also matches the <command>TOKEN</command> inside every
+            -- <action>; that only fails to break this test because an action's
+            -- command element has no nested <name>, which is coincidence, not
+            -- construction.
+            local commandsBlock = xml:match("<commands>(.-)</commands>") or ""
             local names = {}
-            for block in xml:gmatch("<command>(.-)</command>") do
+            for block in commandsBlock:gmatch("<command>(.-)</command>") do
                 local name = block:match("<name>%s*(.-)%s*</name>")
                 if name then table.insert(names, name) end
             end
+            H.isTrue(#names >= 6, "expected the declared commands, found " .. #names)
             H.isTrue(#names >= 6, "expected the declared commands, found " .. #names)
 
             loadDriver()

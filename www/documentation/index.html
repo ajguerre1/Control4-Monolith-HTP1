@@ -70,6 +70,7 @@
   <li>Discrete volume and hold-to-ramp</li>
   <li>Mute</li>
   <li>Loudness on, off and toggle, from the room's own control</li>
+  <li>Dirac, night mode, dialog and bass enhancement, lip sync</li>
   <li>Listening mode across all seven upmixers</li>
   <li>Programming commands for Dirac Live, night mode, dialog and bass enhancement, and lip sync
       delay</li>
@@ -230,7 +231,7 @@
   <tr><td class="name">VIDEO_COLORSPACE</td><td>e.g. <code>BT2020</code></td></tr>
   <tr><td class="name">VIDEO_HDR</td><td>e.g. <code>HDR10</code></td></tr>
   <tr><td class="name">DIRAC_STATE</td><td><code>on</code> / <code>off</code> / <code>bypass</code> — set with the <strong>Set Dirac</strong> command</td></tr>
-  <tr><td class="name">LOUDNESS</td><td><code>off</code> / <code>on</code> — controlled from the room, the same way as Mute: a Loudness button now toggles it, and this variable reports the result</td></tr>
+  <tr><td class="name">LOUDNESS</td><td><code>off</code> / <code>on</code> — always the unit's real state, including changes made on the unit itself</td></tr>
   <tr><td class="name">NIGHT_MODE</td><td><code>off</code> / <code>auto</code> / <code>on</code> — set with the <strong>Set Night Mode</strong> command</td></tr>
   <tr><td class="name">DIALOG_ENHANCE</td><td>0&ndash;6, e.g. <code>3</code> — set with the <strong>Set Dialog Enhance</strong> command</td></tr>
   <tr><td class="name">BASS_ENHANCE</td><td><code>off</code> / <code>on</code> — set with the <strong>Set Bass Enhance</strong> or <strong>Toggle Bass Enhance</strong> commands</td></tr>
@@ -245,6 +246,15 @@
   <br><br>
   The unit reports its own placeholders when there is no signal: <code>-----</code> for resolution,
   <code>--</code> for HDR. Those are the unit's words, passed through unchanged.
+</div>
+
+<div class="note">
+  <strong>The room's Loudness button is one-way.</strong>
+  The receiver proxy accepts loudness commands but defines no way for a driver to
+  report loudness back — its only state notifications are for volume, mute and surround mode. So the
+  room's control shows what it last set, and a change made on the unit's own front panel will not
+  move it. The <code>LOUDNESS</code> variable above is always correct, so use that wherever the real
+  state matters.
 </div>
 
 <h2>Events</h2>

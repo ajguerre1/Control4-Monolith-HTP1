@@ -245,6 +245,23 @@ end
 
 -- Only what actually moved. The volume range moving rescales the reported level,
 -- so vpl and vph feed the volume notification too.
+-- LOUDNESS IS DELIBERATELY ABSENT HERE, and it is not an oversight.
+--
+-- The receiver proxy accepts LOUDNESS_ON, LOUDNESS_OFF and LOUDNESS_TOGGLE, but
+-- it defines no notification to report loudness back: its entire *_CHANGED
+-- family is MUTE_CHANGED, SURROUND_MODE_CHANGED and VOLUME_LEVEL_CHANGED --
+-- read out of the proxy binary, not assumed. IS_LOUDNESS is a programming
+-- conditional the proxy evaluates from state it maintains itself, not something
+-- a driver can push.
+--
+-- So loudness is one-way at the proxy: the room can set it, and the proxy
+-- tracks what it last commanded. A change made on the unit's front panel will
+-- not move the room's control. Inventing a LOUDNESS_CHANGED notification to
+-- paper over that would be guessing an outbound call shape, which is exactly
+-- how three Composer actions shipped dead in this driver.
+--
+-- The truth is still available: the LOUDNESS variable carries the unit's real
+-- state for programming and touchscreens, and updates on every push.
 function Proxy:notify(changes)
     if changes.power then self:_notifyPower() end
     if changes.volume or changes.vpl or changes.vph then self:_notifyVolume() end
