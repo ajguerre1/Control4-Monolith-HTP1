@@ -150,6 +150,16 @@ function COMMANDS.MUTE_TOGGLE(self)
     self.session:write("/muted", not self.state.fields.muted)
 end
 
+-- The unit's own values are the strings "on"/"off", not a boolean, so toggling
+-- means comparing against "on" rather than negating -- an unknown state (nil)
+-- toggles to "on", matching MUTE_TOGGLE's treatment of an unknown mute as off.
+function COMMANDS.LOUDNESS_ON(self) self.session:write("/loudness", "on") end
+function COMMANDS.LOUDNESS_OFF(self) self.session:write("/loudness", "off") end
+function COMMANDS.LOUDNESS_TOGGLE(self)
+    local next = (self.state.fields.loudness == "on") and "off" or "on"
+    self.session:write("/loudness", next)
+end
+
 function COMMANDS.SET_SURROUND_MODE(self, params)
     local key = Mapping.surroundIdToKey(tonumber(params.SURROUND_MODE))
     if not key then

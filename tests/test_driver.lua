@@ -6,6 +6,7 @@ local H = require("tests.harness")
 local mock = H.mock
 local Mapping = require("htp1.mapping")
 local JSON = require("module.json")
+local Frame = require("htp1.frame")
 
 local DEFAULTS = {
     ["Driver Version"] = "", ["Model"] = "HTP-1",
@@ -82,6 +83,46 @@ local function callsNamed(name)
         if c.name == name then table.insert(found, c) end
     end
     return found
+end
+
+-- Decodes one masked client frame (the driver always sends masked, unfragmented
+-- text frames). Handles all three RFC 6455 length encodings, unlike a fixed
+-- 6-byte-header assumption, because a two-path changemso (lip sync) is long
+-- enough to need the 16-bit extended length form.
+local function decodeFrame(raw)
+    local secondByte = raw:byte(2)
+    local masked = secondByte >= 128
+    local len = secondByte % 128
+    local offset = 3
+    if len == 126 then
+        len = raw:byte(3) * 256 + raw:byte(4)
+        offset = 5
+    elseif len == 127 then
+        error("64-bit frame length not expected in these tests")
+    end
+    local maskKey
+    if masked then
+        maskKey = raw:sub(offset, offset + 3)
+        offset = offset + 4
+    end
+    local payload = raw:sub(offset, offset + len - 1)
+    if masked then payload = Frame.applyMask(payload, maskKey) end
+    return payload
+end
+
+-- The operations in the most recent changemso the driver actually sent, or
+-- nil if none was sent since the last mock.clearCalls().
+local function lastWrittenOps()
+    for i = #mock.sent, 1, -1 do
+        local raw = mock.sent[i]
+        if #raw > 2 then
+            local ok, body = pcall(decodeFrame, raw)
+            if ok and body:sub(1, 10) == "changemso " then
+                return JSON:decode(body:sub(11))
+            end
+        end
+    end
+    return nil
 end
 
 return {
@@ -721,6 +762,186 @@ return {
             H.equal(fired[1].args[1], "Surround Mode Changed")
             H.equal(mock.variables.SURROUND_MODE, "Dolby Surround")
             H.assertNoErrorLog()
+        end,
+    },
+
+    --------------------------------------------------------------------------
+    -- Programming commands
+    --------------------------------------------------------------------------
+    {
+        name = "every command declared in driver.xml has a handler",
+        fn = function()
+            -- Mirrors the actions-coverage test above, but for <commands>: a
+            -- programming command arrives as ExecuteCommand("<declared name>",
+            -- tParams) directly -- the exact declared name, spaces and all --
+            -- never wrapped in LUA_ACTION the way an Actions-tab entry is.
+            local handle = assert(io.open("driver.xml", "r"))
+            local xml = handle:read("*a")
+            handle:close()
+
+            local names = {}
+            for block in xml:gmatch("<command>(.-)</command>") do
+                local name = block:match("<name>%s*(.-)%s*</name>")
+                if name then table.insert(names, name) end
+            end
+            H.isTrue(#names >= 6, "expected the declared commands, found " .. #names)
+
+            loadDriver()
+            goLive()
+            for _, name in ipairs(names) do
+                mock.clearCalls()
+                ExecuteCommand(name, {})
+                for _, line in ipairs(mock.printed) do
+                    H.isTrue(line:find("no handler for action", 1, true) == nil,
+                        name .. " has no handler: " .. line)
+                end
+                H.assertNoErrorLog()
+            end
+        end,
+    },
+    {
+        name = "Set Dirac writes /cal/diracactive with the chosen mode",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            ExecuteCommand("Set Dirac", { Mode = "Bypass" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/cal/diracactive")
+            H.equal(ops[1].value, "bypass")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Set Night Mode writes /night with the chosen mode",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            ExecuteCommand("Set Night Mode", { Mode = "Auto" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/night")
+            H.equal(ops[1].value, "auto")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Set Dialog Enhance writes /dialogEnh as a number, from a string parameter",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            -- Control4 delivers every programming-command parameter as a
+            -- string, "5" not 5 -- this is the real shape.
+            ExecuteCommand("Set Dialog Enhance", { Level = "5" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/dialogEnh")
+            H.equal(ops[1].value, 5)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Set Bass Enhance writes /bassenhance with the chosen mode",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            ExecuteCommand("Set Bass Enhance", { Mode = "On" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/bassenhance")
+            H.equal(ops[1].value, "on")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Toggle Bass Enhance flips from whatever the unit currently reports",
+        fn = function()
+            loadDriver()
+            goLive()   -- F.modern() reports bassenhance = "off"
+            mock.clearCalls()
+            ExecuteCommand("Toggle Bass Enhance", {})
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/bassenhance")
+            H.equal(ops[1].value, "on", "toggled from off")
+
+            ExecuteCommand("Toggle Bass Enhance", {})
+            mock.advance(50)
+            H.equal(lastWrittenOps()[1].value, "off", "toggled back from on")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Set Lip Sync Delay writes both the calibration path and the current input's own delay",
+        fn = function()
+            loadDriver()
+            goLive()   -- F.modern()'s selected input is h1
+            mock.clearCalls()
+            ExecuteCommand("Set Lip Sync Delay", { Delay = "90" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.isTrue(ops ~= nil and #ops >= 2,
+                "expected both writes in one flush, got " .. tostring(ops and #ops))
+
+            local byPath = {}
+            for _, op in ipairs(ops) do byPath[op.path] = op.value end
+            H.equal(byPath["/cal/lipsync"], 90)
+            H.equal(byPath["/inputs/h1/delay"], 90)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Set Lip Sync Delay writes only /cal/lipsync when no input is known",
+        fn = function()
+            loadDriver()
+            local F = require("tests.fixtures")
+            goLiveWith(F.sparse())   -- { volume = -10, powerIsOn = false }: no input at all
+            H.equal(DRIVER.state.fields.input, nil, "the fixture reports no input")
+            mock.clearCalls()
+            ExecuteCommand("Set Lip Sync Delay", { Delay = "50" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 1, "only the calibration path should be written, not a nil-keyed input path")
+            H.equal(ops[1].path, "/cal/lipsync")
+            H.equal(ops[1].value, 50)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "an out-of-range or unrecognised command parameter is refused: a log line, no write",
+        fn = function()
+            loadDriver({ ["Debug Mode"] = "On" })
+            goLive()
+
+            local cases = {
+                { "Set Dirac",          { Mode = "Loud" } },
+                { "Set Night Mode",     { Mode = "Maximum" } },
+                { "Set Dialog Enhance", { Level = "7" } },
+                { "Set Dialog Enhance", { Level = "-1" } },
+                { "Set Dialog Enhance", { Level = "not a number" } },
+                { "Set Bass Enhance",   { Mode = "Maybe" } },
+                { "Set Lip Sync Delay", { Delay = "341" } },
+                { "Set Lip Sync Delay", { Delay = "-1" } },
+                { "Set Lip Sync Delay", { Delay = "not a number" } },
+            }
+            for _, case in ipairs(cases) do
+                local name, params = case[1], case[2]
+                mock.clearCalls()
+                ExecuteCommand(name, params)
+                mock.advance(50)
+                H.equal(lastWrittenOps(), nil, name .. " should not have written anything")
+
+                local logged = false
+                for _, line in ipairs(mock.printed) do
+                    if line:find("HTP-1:", 1, true) then logged = true end
+                end
+                H.isTrue(logged, name .. " should have logged the rejection")
+                H.assertNoErrorLog()
+            end
         end,
     },
 }

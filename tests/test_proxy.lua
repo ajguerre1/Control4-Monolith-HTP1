@@ -286,6 +286,30 @@ return {
         end,
     },
     {
+        name = "LOUDNESS_ON, LOUDNESS_OFF and LOUDNESS_TOGGLE all write the right value",
+        fn = function()
+            local proxy, _, transport, state = build()
+            H.equal(state.fields.loudness, "off", "F.modern() starts loudness off")
+
+            proxy:handle(BINDING, "LOUDNESS_ON", {})
+            mock.advance(50)
+            H.equal(lastOps(transport)[1].path, "/loudness")
+            H.equal(lastOps(transport)[1].value, "on")
+
+            proxy:handle(BINDING, "LOUDNESS_OFF", {})
+            mock.advance(50)
+            H.equal(lastOps(transport)[1].value, "off")
+
+            proxy:handle(BINDING, "LOUDNESS_TOGGLE", {})
+            mock.advance(50)
+            H.equal(lastOps(transport)[1].value, "on", "toggled from the current state")
+
+            proxy:handle(BINDING, "LOUDNESS_TOGGLE", {})
+            mock.advance(50)
+            H.equal(lastOps(transport)[1].value, "off", "toggled back")
+        end,
+    },
+    {
         name = "SET_SURROUND_MODE maps a proxy id to an upmixer key",
         fn = function()
             local proxy, _, transport = build()

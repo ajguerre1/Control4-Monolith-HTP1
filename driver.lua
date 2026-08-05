@@ -428,13 +428,100 @@ local ACTIONS = {
     end,
 }
 
+--------------------------------------------------------------------------------
+-- Programming commands
+--------------------------------------------------------------------------------
+
+-- Declared in <commands>. Unlike the Actions tab, Composer delivers one of
+-- these with the command's own declared name as `command` -- never
+-- "LUA_ACTION" -- and parameters keyed by each <param><name>. Every
+-- parameter arrives as a string, so every numeric one goes through tonumber,
+-- and every LIST one is checked against its declared domain: the unit is the
+-- ultimate authority on a value, but nonsense earns a log line here rather
+-- than a write.
+local DIRAC_MODES = { Off = "off", On = "on", Bypass = "bypass" }
+local NIGHT_MODES = { Off = "off", Auto = "auto", On = "on" }
+local ONOFF_MODES = { Off = "off", On = "on" }
+
+local PROGRAMMING_COMMANDS = {}
+
+PROGRAMMING_COMMANDS["Set Dirac"] = function(params)
+    local value = DIRAC_MODES[params.Mode]
+    if not value then
+        DRIVER.log:debug("Set Dirac: unrecognised Mode", tostring(params.Mode))
+        return
+    end
+    DRIVER.session:write("/cal/diracactive", value)
+end
+
+PROGRAMMING_COMMANDS["Set Night Mode"] = function(params)
+    local value = NIGHT_MODES[params.Mode]
+    if not value then
+        DRIVER.log:debug("Set Night Mode: unrecognised Mode", tostring(params.Mode))
+        return
+    end
+    DRIVER.session:write("/night", value)
+end
+
+PROGRAMMING_COMMANDS["Set Dialog Enhance"] = function(params)
+    local level = tonumber(params.Level)
+    if not level or level < 0 or level > 6 then
+        DRIVER.log:debug("Set Dialog Enhance: Level out of range 0-6:", tostring(params.Level))
+        return
+    end
+    DRIVER.session:write("/dialogEnh", level)
+end
+
+PROGRAMMING_COMMANDS["Set Bass Enhance"] = function(params)
+    local value = ONOFF_MODES[params.Mode]
+    if not value then
+        DRIVER.log:debug("Set Bass Enhance: unrecognised Mode", tostring(params.Mode))
+        return
+    end
+    DRIVER.session:write("/bassenhance", value)
+end
+
+PROGRAMMING_COMMANDS["Toggle Bass Enhance"] = function()
+    local next = (DRIVER.state.fields.bassEnhance == "on") and "off" or "on"
+    DRIVER.session:write("/bassenhance", next)
+end
+
+PROGRAMMING_COMMANDS["Set Lip Sync Delay"] = function(params)
+    local delay = tonumber(params.Delay)
+    if not delay or delay < 0 or delay > 340 then
+        DRIVER.log:debug("Set Lip Sync Delay: Delay out of range 0-340:", tostring(params.Delay))
+        return
+    end
+    DRIVER.session:write("/cal/lipsync", delay)
+    -- The vendor's own web client writes the calibration value and the
+    -- currently selected input's own delay together; writing only the first
+    -- would leave the driver disagreeing with the unit's own display for that
+    -- input. Skipped when no input is known yet, rather than building a path
+    -- with a nil key.
+    local input = DRIVER.state.fields.input
+    if input ~= nil then
+        DRIVER.session:write("/inputs/" .. input .. "/delay", delay)
+    end
+end
+
+-- Names only, for the manifest test's coverage check -- same pattern as
+-- DRIVER.VARIABLE_NAMES above.
+DRIVER.PROGRAMMING_COMMAND_NAMES = {}
+for name in pairs(PROGRAMMING_COMMANDS) do
+    table.insert(DRIVER.PROGRAMMING_COMMAND_NAMES, name)
+end
+table.sort(DRIVER.PROGRAMMING_COMMAND_NAMES)
+
 -- Composer's Actions tab does NOT send an action's <command> as the command.
 -- It sends the literal "LUA_ACTION", with the declared name in tParams.ACTION.
 -- Dispatching on the command alone matched nothing and returned in silence, so
 -- every action in this driver did nothing at all and said nothing about it.
 --
--- The direct form is still accepted: it costs one lookup and is how a
--- programming command would arrive if this driver ever declares one.
+-- A programming command declared in <commands> arrives the other way: the
+-- command IS the declared name, spaces and all, never wrapped in LUA_ACTION.
+-- Both forms are tried here, plus a space-stripped variant of the name as a
+-- defensive fallback some shipped drivers also rely on -- it costs one more
+-- table lookup.
 function ExecuteCommand(command, params)
     guard("ExecuteCommand(" .. tostring(command) .. ")", function()
         params = params or {}
@@ -442,9 +529,14 @@ function ExecuteCommand(command, params)
         local name = command
         if command == "LUA_ACTION" then name = params.ACTION end
 
-        local action = ACTIONS[name]
-        if action then
-            action(params)
+        local handler = ACTIONS[name] or PROGRAMMING_COMMANDS[name]
+        if not handler and type(name) == "string" then
+            local stripped = name:gsub(" ", "")
+            handler = ACTIONS[stripped] or PROGRAMMING_COMMANDS[stripped]
+        end
+
+        if handler then
+            handler(params)
             return
         end
 

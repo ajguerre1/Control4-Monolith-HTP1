@@ -136,7 +136,80 @@
 				<command>PRINT_STATE</command>
 			</action>
 		</actions>
-		<commands/>
+		<commands>
+			<command>
+				<name>Set Dirac</name>
+				<description>Set NAME's Dirac Live processing to PARAM1.</description>
+				<params>
+					<param>
+						<name>Mode</name>
+						<type>LIST</type>
+						<items>
+							<item>Off</item>
+							<item>On</item>
+							<item>Bypass</item>
+						</items>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Set Night Mode</name>
+				<description>Set NAME's night mode to PARAM1.</description>
+				<params>
+					<param>
+						<name>Mode</name>
+						<type>LIST</type>
+						<items>
+							<item>Off</item>
+							<item>Auto</item>
+							<item>On</item>
+						</items>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Set Dialog Enhance</name>
+				<description>Set NAME dialog enhancement to PARAM1.</description>
+				<params>
+					<param>
+						<name>Level</name>
+						<type>RANGED_INTEGER</type>
+						<minimum>0</minimum>
+						<maximum>6</maximum>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Set Bass Enhance</name>
+				<description>Set NAME's bass enhancement to PARAM1.</description>
+				<params>
+					<param>
+						<name>Mode</name>
+						<type>LIST</type>
+						<items>
+							<item>Off</item>
+							<item>On</item>
+						</items>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Toggle Bass Enhance</name>
+				<description>Toggle NAME's bass enhancement.</description>
+			</command>
+			<command>
+				<name>Set Lip Sync Delay</name>
+				<description>Set NAME's lip sync delay to PARAM1 milliseconds.</description>
+				<params>
+					<param>
+						<name>Delay</name>
+						<type>RANGED_INTEGER</type>
+						<minimum>0</minimum>
+						<maximum>340</maximum>
+					</param>
+				</params>
+			</command>
+		</commands>
 	</config>
 	<proxies>
 		<proxy proxybindingid="5001" primary="True" name="Monolith HTP-1">receiver</proxy>
@@ -157,10 +230,10 @@
 		<has_toggle_mute_control>True</has_toggle_mute_control>
 		<has_discrete_input_select>True</has_discrete_input_select>
 		<has_discrete_surround_mode_select>True</has_discrete_surround_mode_select>
-		<!-- Flipped to True in M3, when the handlers exist. A declared capability
-		     with no handler is a dead button in the room UI. -->
-		<has_discrete_loudness_control>False</has_discrete_loudness_control>
-		<has_toggle_loudness_control>False</has_toggle_loudness_control>
+		<!-- Flipped to True in M3-T2: LOUDNESS_ON/OFF/TOGGLE now have handlers
+		     in htp1/proxy.lua, so this is no longer a dead button in the room UI. -->
+		<has_discrete_loudness_control>True</has_discrete_loudness_control>
+		<has_toggle_loudness_control>True</has_toggle_loudness_control>
 		<!-- The unit has parametric EQ and bass management, not tone controls. -->
 		<has_discrete_bass_control>False</has_discrete_bass_control>
 		<has_discrete_treble_control>False</has_discrete_treble_control>

@@ -39,6 +39,21 @@ local function parseEvents(xml)
     return events
 end
 
+-- Returns an array of every declared <command>'s <name>, in document order.
+-- Scoped to the <commands> wrapper deliberately: <action> also has a child
+-- element literally named <command> (its dispatch token, e.g.
+-- REFRESH_FROM_DEVICE), and an unscoped <command>(.-)</command> match picks
+-- those up too -- with no <name> of their own to find inside them.
+local function parseCommands(xml)
+    local names = {}
+    local wrapper = xml:match("<commands>(.-)</commands>") or ""
+    for block in wrapper:gmatch("<command>(.-)</command>") do
+        local name = block:match("<name>%s*(.-)%s*</name>")
+        if name then table.insert(names, name) end
+    end
+    return names
+end
+
 -- driver.lua's DRIVER.EVENTS table is assigned at file scope (not inside
 -- buildDriver), and none of its requires touch the C4 API at load time, so a
 -- bare dofile is enough to read it back -- no mock, no OnDriverInit needed.
@@ -134,7 +149,7 @@ return {
         end,
     },
     {
-        name = "the documentation names every property, action, variable and event",
+        name = "the documentation names every property, action, command, variable and event",
         fn = function()
             -- Documentation that silently falls behind the driver is worse than
             -- none: it is confidently wrong. This does not check the prose, only
@@ -158,6 +173,7 @@ return {
             for block in xml:gmatch("<action>(.-)</action>") do
                 require_(block:match("<name>%s*(.-)%s*</name>"), "action")
             end
+            for _, name in ipairs(parseCommands(xml)) do require_(name, "command") end
             for block in xml:gmatch("<event>(.-)</event>") do
                 require_(block:match("<name>%s*(.-)%s*</name>"), "event")
             end
@@ -344,6 +360,82 @@ return {
                 "the replacement action should be declared")
             H.isTrue(xml:find("<command>PRINT_INPUT_LABELS</command>", 1, true) ~= nil,
                 "the replacement command should be declared")
+        end,
+    },
+    {
+        name = "loudness is a discrete and toggle control now that the proxy handles it",
+        fn = function()
+            local xml = readManifest()
+            H.isTrue(xml:find("<has_discrete_loudness_control>True</has_discrete_loudness_control>",
+                1, true) ~= nil, "has_discrete_loudness_control should be True")
+            H.isTrue(xml:find("<has_toggle_loudness_control>True</has_toggle_loudness_control>",
+                1, true) ~= nil, "has_toggle_loudness_control should be True")
+        end,
+    },
+    {
+        name = "the six processing commands are declared with the right names and param shapes",
+        fn = function()
+            local xml = readManifest()
+            local names = parseCommands(xml)
+            local expected = { "Set Dirac", "Set Night Mode", "Set Dialog Enhance",
+                                "Set Bass Enhance", "Toggle Bass Enhance", "Set Lip Sync Delay" }
+            H.equal(#names, #expected, "expected exactly the six declared commands")
+            for _, name in ipairs(expected) do
+                local found = false
+                for _, actual in ipairs(names) do if actual == name then found = true end end
+                H.isTrue(found, "no <command> named " .. name)
+            end
+
+            local function commandBlock(name)
+                return xml:match("<command>%s*<name>" .. name:gsub("([%-%.%:])", "%%%1") ..
+                    "</name>(.-)</command>")
+            end
+
+            local function listItems(block)
+                local items, itemBlock = {}, block:match("<items>(.-)</items>")
+                if not itemBlock then return items end
+                for item in itemBlock:gmatch("<item>%s*(.-)%s*</item>") do
+                    table.insert(items, item)
+                end
+                return items
+            end
+
+            local diracBlock = assert(commandBlock("Set Dirac"))
+            H.isTrue(diracBlock:find("<name>Mode</name>", 1, true) ~= nil)
+            H.isTrue(diracBlock:find("<type>LIST</type>", 1, true) ~= nil)
+            local diracItems = listItems(diracBlock)
+            H.equal(#diracItems, 3)
+            for i, item in ipairs({ "Off", "On", "Bypass" }) do
+                H.equal(diracItems[i], item, "Set Dirac item " .. i)
+            end
+
+            local nightBlock = assert(commandBlock("Set Night Mode"))
+            local nightItems = listItems(nightBlock)
+            for i, item in ipairs({ "Off", "Auto", "On" }) do
+                H.equal(nightItems[i], item, "Set Night Mode item " .. i)
+            end
+
+            local dialogBlock = assert(commandBlock("Set Dialog Enhance"))
+            H.isTrue(dialogBlock:find("<name>Level</name>", 1, true) ~= nil)
+            H.isTrue(dialogBlock:find("<type>RANGED_INTEGER</type>", 1, true) ~= nil)
+            H.isTrue(dialogBlock:find("<minimum>0</minimum>", 1, true) ~= nil)
+            H.isTrue(dialogBlock:find("<maximum>6</maximum>", 1, true) ~= nil)
+
+            local bassBlock = assert(commandBlock("Set Bass Enhance"))
+            local bassItems = listItems(bassBlock)
+            for i, item in ipairs({ "Off", "On" }) do
+                H.equal(bassItems[i], item, "Set Bass Enhance item " .. i)
+            end
+
+            local toggleBassBlock = assert(commandBlock("Toggle Bass Enhance"))
+            H.isTrue(toggleBassBlock:find("<param>", 1, true) == nil,
+                "Toggle Bass Enhance takes no parameters")
+
+            local lipSyncBlock = assert(commandBlock("Set Lip Sync Delay"))
+            H.isTrue(lipSyncBlock:find("<name>Delay</name>", 1, true) ~= nil)
+            H.isTrue(lipSyncBlock:find("<type>RANGED_INTEGER</type>", 1, true) ~= nil)
+            H.isTrue(lipSyncBlock:find("<minimum>0</minimum>", 1, true) ~= nil)
+            H.isTrue(lipSyncBlock:find("<maximum>340</maximum>", 1, true) ~= nil)
         end,
     },
     {
