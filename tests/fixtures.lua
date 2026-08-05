@@ -14,6 +14,18 @@ local function baseInputs()
     }
 end
 
+-- The unit's decoder internals -- sample rate enums, delay values, activity
+-- bitmasks, format codes -- that this driver deliberately does not track.
+-- Only present here to prove a `/status/raw/...` push is ignored.
+local function statusRaw()
+    return {
+        decoderSampleRateEnum = 2,
+        delayValues = { 0, 0, 12, 0 },
+        activityMask = 0,
+        formatCode = 17,
+    }
+end
+
 -- Firmware 2.x shape: has channeltrim, dialnorm, shaker, secondaryVolume.
 function F.modern()
     return {
@@ -36,11 +48,29 @@ function F.modern()
                      SerialNumber = "0001" },
         channeltrim = {}, dialnorm = 0, shaker = {}, secondaryVolume = -40,
         loudness = "off", night = "off", dialogEnh = 3, bassenhance = "off",
+        status = {
+            SurroundMode = "Native Dolby ATMOS",
+            DECSourceProgram = "Dolby MAT/PCM",
+            DECProgramFormat = "Object Audio",
+            DECSampleRate = "48 kHz",
+            ENCListeningFormat = "5.1.2",
+            ENCSampleRate = "48 kHz",
+            DiracState = "on",
+            raw = statusRaw(),
+        },
+        videostat = {
+            VideoResolution = "3840x2160p60Hz",
+            VideoColorSpace = "BT2020",
+            HDRstatus = "HDR10",
+        },
     }
 end
 
 -- Firmware 1.x shape: no channeltrim/dialnorm/shaker, and secondVolume not
 -- secondaryVolume. Everything this driver reads must still be present.
+--
+-- Also the fixture that proves absence tolerance for the video fields: this
+-- unit reports `status` but, on this firmware, no `videostat` block at all.
 function F.legacy()
     return {
         volume = -29,
@@ -56,6 +86,16 @@ function F.legacy()
                      SerialNumber = "0002" },
         secondVolume = -40, vu = {},
         loudness = "off", night = "off", dialogEnh = 3, bassenhance = "off",
+        status = {
+            SurroundMode = "Dolby Surround",
+            DECSourceProgram = "PCM",
+            DECProgramFormat = "2.0.0",
+            DECSampleRate = "48 kHz",
+            ENCListeningFormat = "5.2.2t",
+            ENCSampleRate = "48 kHz",
+            DiracState = "off",
+            raw = statusRaw(),
+        },
     }
 end
 

@@ -12,18 +12,28 @@ State.__index = State
 
 -- Tracked scalars, by their JSON-pointer path in the document.
 local SCALAR_PATHS = {
-    ["/volume"]                = "volume",
-    ["/muted"]                 = "muted",
-    ["/powerIsOn"]             = "power",
-    ["/powerAction"]           = "powerAction",
-    ["/input"]                 = "input",
-    ["/upmix/select"]          = "upmix",
-    ["/cal/vpl"]               = "vpl",
-    ["/cal/vph"]               = "vph",
-    ["/unitname"]              = "unitName",
-    ["/versions/avController"] = "avControllerVersion",
-    ["/versions/swVer"]        = "systemVersion",
-    ["/versions/SerialNumber"] = "serial",
+    ["/volume"]                     = "volume",
+    ["/muted"]                      = "muted",
+    ["/powerIsOn"]                  = "power",
+    ["/powerAction"]                = "powerAction",
+    ["/input"]                      = "input",
+    ["/upmix/select"]               = "upmix",
+    ["/cal/vpl"]                    = "vpl",
+    ["/cal/vph"]                    = "vph",
+    ["/unitname"]                   = "unitName",
+    ["/versions/avController"]      = "avControllerVersion",
+    ["/versions/swVer"]             = "systemVersion",
+    ["/versions/SerialNumber"]      = "serial",
+    ["/status/SurroundMode"]        = "surroundMode",
+    ["/status/DECSourceProgram"]    = "decSourceProgram",
+    ["/status/DECProgramFormat"]    = "decProgramFormat",
+    ["/status/DECSampleRate"]       = "decSampleRate",
+    ["/status/ENCListeningFormat"]  = "encListeningFormat",
+    ["/status/ENCSampleRate"]       = "encSampleRate",
+    ["/status/DiracState"]          = "diracState",
+    ["/videostat/VideoResolution"]  = "videoResolution",
+    ["/videostat/VideoColorSpace"]  = "videoColorSpace",
+    ["/videostat/HDRstatus"]        = "videoHdr",
 }
 State.SCALAR_PATHS = SCALAR_PATHS
 
@@ -141,7 +151,16 @@ function State:applyDocument(doc)
 end
 
 -- Container paths whose replacement re-derives everything beneath them.
-local CONTAINER_PREFIXES = { "/cal", "/upmix", "/versions", "/inputs" }
+--
+-- `/status` also holds a `raw` sub-table of decoder internals (sample rate
+-- enums, delay values, activity bitmasks, format codes) that this driver does
+-- not read. It is deliberately absent from SCALAR_PATHS, so it is untouched by
+-- a wholesale `/status` replace (only the named leaves above get re-derived)
+-- and `isInteresting` never matches a path under `/status/raw/...` -- neither
+-- path equals "/status" exactly, so a targeted push there is dropped before
+-- any allocation. Tracking it wildcard-style would undo the entire reason
+-- this driver projects rather than mirrors the ~38 KB document.
+local CONTAINER_PREFIXES = { "/cal", "/upmix", "/versions", "/inputs", "/status", "/videostat" }
 
 -- True when `path` is a tracked scalar, a tracked input sub-path, or a container
 -- holding either. Checked before any allocation, so the thousands of paths this
