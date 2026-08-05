@@ -259,6 +259,17 @@ return {
         end,
     },
     {
+        name = "a failed reader discards pushed bytes instead of hoarding them",
+        fn = function()
+            local r = Frame.newReader()
+            r:push("\128\3one")             -- CONT with FIN, nothing open
+            r:next()
+            r:push(string.rep("x", 5000))
+            H.equal(#r.buf, 0,
+                "a caller that ignores the error must not grow the buffer without bound")
+        end,
+    },
+    {
         name = "a truncated 16-bit length header consumes nothing",
         fn = function()
             local r = Frame.newReader()

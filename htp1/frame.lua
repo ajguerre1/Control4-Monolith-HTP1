@@ -105,7 +105,12 @@ function Frame.newReader()
     return setmetatable({ buf = "", fragment = nil, fragmentOp = nil, failed = nil }, Reader)
 end
 
+-- Bytes pushed after a failure are dropped. Making errors sticky means next()
+-- no longer drains the buffer, so a caller that ignores the error and keeps
+-- pushing would otherwise grow it without bound -- trading one unbounded
+-- accumulator for another.
 function Reader:push(chunk)
+    if self.failed then return end
     self.buf = self.buf .. chunk
 end
 
