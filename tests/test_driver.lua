@@ -229,12 +229,60 @@ return {
         end,
     },
     {
+        name = "every action declared in driver.xml runs when Composer invokes it",
+        fn = function()
+            -- Composer sends the literal "LUA_ACTION" with the declared command
+            -- in tParams.ACTION -- NOT the command as the command. Dispatching
+            -- on the command matched nothing and returned in silence, so every
+            -- action did nothing and said nothing, through two releases and a
+            -- field install. The tests missed it because they invoked the
+            -- actions the way the code expected rather than the way Composer
+            -- does. This test reads the manifest so a new action cannot be
+            -- added without being exercised the real way.
+            local handle = assert(io.open("driver.xml", "r"))
+            local xml = handle:read("*a")
+            handle:close()
+
+            local commands = {}
+            for block in xml:gmatch("<action>(.-)</action>") do
+                local command = block:match("<command>%s*(.-)%s*</command>")
+                if command then table.insert(commands, command) end
+            end
+            H.isTrue(#commands >= 3, "expected the declared actions, found " .. #commands)
+
+            loadDriver()
+            goLive()
+            for _, command in ipairs(commands) do
+                mock.clearCalls()
+                ExecuteCommand("LUA_ACTION", { ACTION = command })
+                for _, line in ipairs(mock.printed) do
+                    H.isTrue(line:find("no handler for action", 1, true) == nil,
+                        command .. " has no handler: " .. line)
+                end
+                H.assertNoErrorLog()
+            end
+        end,
+    },
+    {
+        name = "an unrecognised action says so instead of failing silently",
+        fn = function()
+            loadDriver()
+            mock.clearCalls()
+            ExecuteCommand("LUA_ACTION", { ACTION = "NO_SUCH_ACTION" })
+            local complained = false
+            for _, line in ipairs(mock.printed) do
+                if line:find("no handler for action", 1, true) then complained = true end
+            end
+            H.isTrue(complained, "silence is how the dispatch bug hid for two releases")
+        end,
+    },
+    {
         name = "the refresh action re-reads the document",
         fn = function()
             loadDriver()
             goLive()
             local before = #mock.sent
-            ExecuteCommand("REFRESH_FROM_DEVICE", {})
+            ExecuteCommand("LUA_ACTION", { ACTION = "REFRESH_FROM_DEVICE" })
             H.equal(#mock.sent, before + 1, "a getmso should have gone out")
             H.assertNoErrorLog()
         end,
@@ -246,7 +294,7 @@ return {
             loadDriver()
             goLive()   -- F.modern()'s inputs: h1, h2, h3, a1, optical1 (mapped), roon (not)
             mock.clearCalls()
-            ExecuteCommand("PRINT_INPUT_LABELS", {})
+            ExecuteCommand("LUA_ACTION", { ACTION = "PRINT_INPUT_LABELS" })
 
             local lines = mock.printed
             H.count(lines, 7, "a header line plus one line per reported input")
@@ -284,12 +332,12 @@ return {
             goLive()
 
             mock.clearCalls()
-            ExecuteCommand("PRINT_INPUT_LABELS", {})
+            ExecuteCommand("LUA_ACTION", { ACTION = "PRINT_INPUT_LABELS" })
             local first = {}
             for i, line in ipairs(mock.printed) do first[i] = line end
 
             mock.clearCalls()
-            ExecuteCommand("PRINT_INPUT_LABELS", {})
+            ExecuteCommand("LUA_ACTION", { ACTION = "PRINT_INPUT_LABELS" })
             local second = mock.printed
 
             H.count(second, #first, "the second run should print the same number of lines")
