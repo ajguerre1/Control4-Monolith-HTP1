@@ -6,7 +6,7 @@
 	<model>HTP-1</model>
 	<created>08/04/2026 12:00</created>
 	<modified>08/04/2026 12:00</modified>
-	<version>103</version>
+	<version>104</version>
 	<auto_update>false</auto_update>
 	<!-- Deliberately empty, overriding the receiver proxy's own roomAutoBind.
 	     That proxy claims AudioSelectionDevice, AudioVolumeDevice,
@@ -21,6 +21,11 @@
 	<controlmethod>IP</controlmethod>
 	<driver>DriverWorks</driver>
 	<config>
+		<!-- Renders in Composer's Documentation tab. A plain, self-contained page:
+		     the first-party drivers ship a 1.1 MB React bundle that renders a
+		     Markdown file, which would mean a build pipeline and two copies of the
+		     content free to drift apart. -->
+		<documentation file="www/documentation/index.html"/>
 		<script jit="1" file="driver.lua"/>
 		<properties>
 			<property>

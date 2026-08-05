@@ -42,7 +42,7 @@ end
 -- driver.lua's DRIVER.EVENTS table is assigned at file scope (not inside
 -- buildDriver), and none of its requires touch the C4 API at load time, so a
 -- bare dofile is enough to read it back -- no mock, no OnDriverInit needed.
-local function loadEventNames()
+local function loadDriverFile()
     for _, name in ipairs({ "DRIVER", "OnDriverInit", "OnDriverLateInit", "OnDriverDestroyed",
                              "OnPropertyChanged", "ExecuteCommand", "ReceivedFromProxy",
                              "OnConnectionStatusChanged", "OnBindingChanged",
@@ -50,6 +50,15 @@ local function loadEventNames()
         _G[name] = nil
     end
     dofile("driver.lua")
+end
+
+local function loadVariableNames()
+    loadDriverFile()
+    return DRIVER.VARIABLE_NAMES
+end
+
+local function loadEventNames()
+    loadDriverFile()
     local names = {}
     for _, name in pairs(DRIVER.EVENTS) do names[name] = true end
     return names
@@ -92,6 +101,70 @@ return {
                 H.isTrue(items:find("<item>" .. choice .. "</item>", 1, true) ~= nil,
                     "missing choice: " .. choice)
             end
+        end,
+    },
+    {
+        name = "the declared documentation file exists and is packaged",
+        fn = function()
+            local xml = readManifest()
+            local file = xml:match('<documentation%s+file%s*=%s*"([^"]+)"')
+            H.isTrue(file ~= nil, "driver.xml should declare a documentation file")
+
+            -- A declared file that is not on disk gives Composer an empty tab
+            -- with no error, and nothing else here would notice.
+            local handle = io.open(file, "r")
+            H.isTrue(handle ~= nil, "declared but missing on disk: " .. tostring(file))
+            local body = handle:read("*a")
+            handle:close()
+            H.isTrue(#body > 2000, "the documentation looks like a stub: " .. #body .. " bytes")
+
+            -- Self-contained on purpose: the first-party drivers render Markdown
+            -- through a 1.1 MB React bundle, which would mean a build pipeline
+            -- and two copies of the content free to drift apart.
+            H.equal(body:find("<script", 1, true), nil,
+                "the documentation should need no scripting to render")
+
+            -- The build packs an explicit list; a file missing from it ships a
+            -- driver whose Documentation tab is blank.
+            local script = assert(io.open("tools/build-c4z.ps1", "r"))
+            local payload = script:read("*a")
+            script:close()
+            H.isTrue(payload:find(file, 1, true) ~= nil,
+                file .. " is declared but not in the build payload")
+        end,
+    },
+    {
+        name = "the documentation names every property, action, variable and event",
+        fn = function()
+            -- Documentation that silently falls behind the driver is worse than
+            -- none: it is confidently wrong. This does not check the prose, only
+            -- that nothing user-facing was added without being written up.
+            local xml = readManifest()
+            local file = xml:match('<documentation%s+file%s*=%s*"([^"]+)"')
+            local handle = assert(io.open(file, "r"))
+            local doc = handle:read("*a")
+            handle:close()
+
+            local missing = {}
+            local function require_(name, kind)
+                if not doc:find(name, 1, true) then
+                    table.insert(missing, kind .. " " .. name)
+                end
+            end
+
+            for block in xml:gmatch("<property>(.-)</property>") do
+                require_(block:match("<name>%s*(.-)%s*</name>"), "property")
+            end
+            for block in xml:gmatch("<action>(.-)</action>") do
+                require_(block:match("<name>%s*(.-)%s*</name>"), "action")
+            end
+            for block in xml:gmatch("<event>(.-)</event>") do
+                require_(block:match("<name>%s*(.-)%s*</name>"), "event")
+            end
+            for name in pairs(loadEventNames()) do require_(name, "fired event") end
+            for _, name in ipairs(loadVariableNames()) do require_(name, "variable") end
+
+            H.equal(#missing, 0, "undocumented: " .. table.concat(missing, ", "))
         end,
     },
     {

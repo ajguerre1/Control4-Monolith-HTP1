@@ -123,6 +123,13 @@ local EVENTS = {
 }
 DRIVER.EVENTS = EVENTS -- for tests; the code below always uses the local.
 
+-- Names only, for the documentation check in tests/test_manifest.lua. Exposing
+-- the VARIABLES table itself would let a test assert the driver against itself;
+-- the names are what the documentation has to keep up with.
+DRIVER.VARIABLE_NAMES = {}
+for name in pairs(VARIABLES) do table.insert(DRIVER.VARIABLE_NAMES, name) end
+table.sort(DRIVER.VARIABLE_NAMES)
+
 local function initVariables()
     DRIVER.varCache, DRIVER.varCreated = {}, {}
     local connected = DRIVER.session and DRIVER.session.connected or false
