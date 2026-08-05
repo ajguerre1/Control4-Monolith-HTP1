@@ -34,7 +34,14 @@ DOCUMENT = {
         "h2": {"label": "Console", "visible": True},
         "a1": {"label": "Turntable", "visible": True},
     },
-    "versions": {"avController": "5.96 Built Jan  1 2026, 00:00:00\n", "SerialNumber": "0001"},
+    # Both versions, because the driver reports them as separate properties and
+    # a fake missing swVer would let System Software Version read back empty on a
+    # manual run without anything looking wrong.
+    "versions": {
+        "avController": "5.96 Built Jan  1 2026, 00:00:00\n",
+        "swVer": "V2.1.1",
+        "SerialNumber": "0001",
+    },
     "status": {"SurroundMode": "Dolby Surround", "DECSourceProgram": "PCM"},
     "videostat": {"VideoResolution": "3840x2160p60Hz", "HDRstatus": "HDR10"},
 }
