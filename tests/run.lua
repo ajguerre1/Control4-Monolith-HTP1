@@ -10,6 +10,7 @@ local SUITES = {
     "tests.test_smoke",
     "tests.test_frame",
     "tests.test_protocol",
+    "tests.test_mapping",
 }
 
 local GREEN, RED, DIM, RESET = "\27[32m", "\27[31m", "\27[2m", "\27[0m"
