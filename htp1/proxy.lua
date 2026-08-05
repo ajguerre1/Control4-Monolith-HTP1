@@ -48,7 +48,11 @@ end
 -- source of truth for the write's confirmation, and a caller-side "no real
 -- change" skip here also has to be right for every future caller, not just the
 -- ones known today.
-function Proxy:_setVolumeDb(db)
+-- `asserted` means the room named a level outright rather than nudging one, so
+-- it deserves an answer even if nothing moved: percent maps onto dB lossily, and
+-- the room may be holding a percentage that does not round to the dB we are on.
+-- A ramp tick asserts nothing, so it stays quiet.
+function Proxy:_setVolumeDb(db, asserted)
     local low, high = self:_range()
     if not low then return end
     if db < low then db = low end
@@ -58,12 +62,10 @@ function Proxy:_setVolumeDb(db)
         -- Already there, so writing again would be noise: a ramp held against
         -- either end of the range would otherwise rewrite the same value for as
         -- long as the button is down.
-        --
-        -- Still re-notify, because percent maps onto dB lossily. The room may
-        -- believe a percentage that does not round to this dB, and dB is the
-        -- truth -- without this the room's bar could sit one step off with
-        -- nothing to correct it.
-        self:_notifyVolume()
+        if asserted then
+            self.lastVolumePercent = nil
+            self:_notifyVolume()
+        end
         return
     end
 
@@ -118,7 +120,7 @@ function COMMANDS.SET_VOLUME_LEVEL(self, params)
     local low, high = self:_range()
     if not low then return end
     local db = Mapping.percentToDb(tonumber(params.LEVEL), low, high)
-    if db then self:_setVolumeDb(db) end
+    if db then self:_setVolumeDb(db, true) end
 end
 
 function COMMANDS.PULSE_VOL_UP(self) self:_stepVolume(1) end
@@ -171,6 +173,11 @@ function Proxy:_notifyVolume()
     local low, high = self:_range()
     local percent = Mapping.dbToPercent(self.state.fields.volume, low, high)
     if percent == nil then return end
+    -- A ramp held against either end re-affirms the same level on every tick,
+    -- since the write is suppressed but the room still has to be told the truth.
+    -- Sending an identical level repeatedly tells it nothing it does not know.
+    if percent == self.lastVolumePercent then return end
+    self.lastVolumePercent = percent
     self:_notify("VOLUME_LEVEL_CHANGED", { LEVEL = percent })
 end
 
@@ -196,7 +203,15 @@ function Proxy:_notifySurround()
     self:_notify("SURROUND_MODE_CHANGED", { SURROUND_MODE = tostring(id) })
 end
 
+-- Public teardown, so driver.lua does not have to reach for a private method.
+function Proxy:stop()
+    self:_stopRamp()
+end
+
 function Proxy:announce()
+    -- An announce restates everything unconditionally: it follows a connect or a
+    -- binding change, where the room's idea of the level cannot be assumed.
+    self.lastVolumePercent = nil
     self:_notifyPower()
     self:_notifyVolume()
     self:_notifyMute()

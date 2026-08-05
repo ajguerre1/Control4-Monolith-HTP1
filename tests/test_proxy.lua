@@ -136,6 +136,35 @@ return {
         end,
     },
     {
+        name = "a ramp held at the end of the range stops notifying too",
+        fn = function()
+            local proxy, _, _, state = build({ rampMs = 100 })
+            proxy:handle(BINDING, "START_VOL_DOWN", {})
+            mock.advance(10000)
+            proxy:handle(BINDING, "STOP_VOL_DOWN", {})
+            H.equal(state.fields.volume, -50)
+
+            mock.clearCalls()
+            proxy:handle(BINDING, "START_VOL_DOWN", {})
+            mock.advance(10000)
+            proxy:handle(BINDING, "STOP_VOL_DOWN", {})
+            H.count(mock.proxyCalls(BINDING, "VOLUME_LEVEL_CHANGED"), 0,
+                "restating an unchanged level tells the room nothing it does not know")
+        end,
+    },
+    {
+        name = "announce restates the level even when nothing moved",
+        fn = function()
+            local proxy = build()
+            proxy:announce()
+            mock.clearCalls()
+            proxy:announce()
+            H.isTrue(mock.lastProxyCall(BINDING, "VOLUME_LEVEL_CHANGED") ~= nil,
+                "an announce follows a connect or binding change, where the room's "
+                .. "idea of the level cannot be assumed")
+        end,
+    },
+    {
         name = "a ramp held at the end of the range stops writing",
         fn = function()
             -- Without the already-there guard this rewrites the same dB for as

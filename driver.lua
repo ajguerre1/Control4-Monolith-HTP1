@@ -118,7 +118,7 @@ end
 function OnDriverDestroyed()
     guard("OnDriverDestroyed", function()
         if DRIVER.session then DRIVER.session:stop() end
-        if DRIVER.proxy then DRIVER.proxy:_stopRamp() end
+        if DRIVER.proxy then DRIVER.proxy:stop() end
     end)
 end
 
