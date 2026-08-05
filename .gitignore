@@ -1,0 +1,12 @@
+# Packaged driver output
+build/
+
+# Compiled Lua
+luac.out
+
+# Driver archives are build artefacts, not sources
+*.c4z
+
+# Captured device state — contains input labels and the unit's name
+mso_*.json
+*.capture.json
