@@ -20,6 +20,21 @@ return {
         end,
     },
     {
+        name = "a masked frame matches the worked example in RFC 6455 section 5.7",
+        fn = function()
+            -- The RFC publishes this exact frame for the text "Hello" masked with
+            -- key 0x37 0xfa 0x21 0x3d. It is an external oracle: the round-trip
+            -- tests above cannot catch an off-by-one in the key cycling, because
+            -- XOR is self-inverse under any consistent scheme. This can -- note
+            -- that the fifth payload byte must wrap back to the first key byte.
+            local key = string.char(0x37, 0xFA, 0x21, 0x3D)
+            local expected = string.char(0x81, 0x85, 0x37, 0xFA, 0x21, 0x3D,
+                                         0x7F, 0x9F, 0x4D, 0x51, 0x58)
+            H.equal(Frame.encode(Frame.OP.TEXT, "Hello", key), expected,
+                "encoded frame differs from the RFC's published bytes")
+        end,
+    },
+    {
         name = "a short text frame sets FIN, the opcode, the mask bit and the length",
         fn = function()
             local f = Frame.encode(Frame.OP.TEXT, "getmso", KEY)
