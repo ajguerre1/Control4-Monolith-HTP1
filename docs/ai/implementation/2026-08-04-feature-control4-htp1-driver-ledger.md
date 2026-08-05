@@ -81,3 +81,21 @@ Scoped re-review (opus): all six ADDRESSED; judged the three modified backoff te
 Final hardening: commit ebcc1a1, 202 green. The cap's reset is scoped to DELIBERATE re-requests only — putting it in the shared refresh() would have restored the very storm C2 fixed, and both halves are now pinned by tests. Plus pcall-guarded seed, OnNetworkBindingChanged alias, backoff reset on address arrival.
 STATUS: ready for a hardware trial. 202 tests green, build 11 entries / 30.7 KB.
 OPEN FOR HARDWARE (cannot be settled from code): C4:GetBindingAddress semantics; whether keep_connection makes Director re-establish TCP behind our state machine; SendToProxy param typing; whether binding 7000 needs proxybindingid="5001" like every other proxy-addressed connection; C4:Base64Encode NUL handling; whether SendToNetwork/ReceivedFromNetwork are binary-clean; whether the unit keeps its network stack alive with powerIsOn false.
+
+=== HARDWARE TRIAL, 2026-08-05 (v1.0.1) ===
+CONFIRMED WORKING on a real Control4 project:
+  - The empty <roomAutoBind></roomAutoBind> in the driver's own manifest DOES override the receiver
+    proxy's. The driver arrives in a room unbound. This closes the largest unverified assumption in
+    v1.0.1 and is the only experimentally-confirmed way to stop a receiver-class driver claiming a
+    room's endpoints -- no shipped .c4z in a 148-driver library does it.
+  - The type-7 room end-point (connection 7000) does NOT need proxybindingid="5001". Room volume and
+    mute feedback reach Navigator and the handheld remotes without it. This was flagged as the most
+    likely failure point because the sibling Control4-HA work lost ~12 hardware iterations to volume
+    feedback that never appeared; that was the amplifier proxy, and it is not the same problem.
+  - Stringified proxy notification parameters are accepted by Director.
+  - The websocket framing survives the real SendToNetwork / ReceivedFromNetwork path intact, so those
+    are binary-clean for this traffic.
+STILL OPEN: whether the unit keeps its network stack alive with powerIsOn false; whether
+keep_connection makes Director re-establish the socket behind the driver's state machine, and how
+that interacts with the connect watchdog; long-run reconnection across unit reboot, network drop and
+controller restart over days.

@@ -3,10 +3,10 @@
 A [Control4](https://www.control4.com/) DriverWorks driver that exposes the Monoprice Monolith HTP-1
 AV processor as a `receiver`-class device over IP.
 
-> **Status: v1.0.1 pre-release. In trial on real hardware.**
-> The driver is complete for its first milestone, has 205 offline tests, and has been installed in a
-> real Control4 project — v1.0.1 fixes the first three findings from that install. It is not yet
-> proven in daily use. See [Known unknowns](#known-unknowns).
+> **Status: v1.0.1 pre-release. Working on real hardware.**
+> Installed in a real Control4 project and confirmed working: the driver arrives unbound, and volume
+> and mute feedback reach Navigator and the handheld remotes. Not yet proven over days of daily use —
+> see [Known unknowns](#known-unknowns) for what is still unverified.
 
 ## What it does today
 
@@ -86,20 +86,27 @@ virtual time. `tools/fake-htp1.py` serves the real protocol locally, with delibe
 
 ## Known unknowns
 
-These cannot be settled without a controller, and are the first things to check on a trial:
+### Confirmed on hardware
 
-- **Whether the empty `<roomAutoBind>` actually suppresses auto-binding.** The `receiver` proxy claims
-  every room endpoint the moment the driver joins a room, and an empty element in this driver's own
-  manifest is the only available lever. Nothing on a development machine can prove Composer honours
-  the override, so confirm it by adding the driver to a fresh room and checking it arrives unbound.
-- Connection 7000 is the only proxy-addressed connection without `proxybindingid="5001"`. If room
-  volume and mute feedback do not appear, check this first.
+- **An empty `<roomAutoBind>` in the driver's own manifest does override the proxy's.** The `receiver`
+  proxy claims all five room roles on room-add; declaring the element empty here suppresses that, and
+  the driver arrives unbound. This is the only documented-by-experiment way to stop a `receiver`-class
+  driver claiming a room's endpoints — no shipped `.c4z` in a 148-driver library does it.
+- **The type-7 room end-point does not need `proxybindingid`.** Connection 7000 carries none, and room
+  volume and mute feedback still reach Navigator and the handheld remotes. Worth recording because the
+  sibling Control4-HA work lost roughly a dozen hardware iterations to volume feedback that never
+  appeared — that was the `amplifier` proxy, and this is not the same problem.
+- Stringified proxy notification parameters are accepted, and the framing survives the real
+  `SendToNetwork` / `ReceivedFromNetwork` path intact.
+
+### Still open
+
 - Whether the unit keeps its network stack alive with `powerIsOn` false. Both reference units report
   `fastStart: "on"`, which suggests yes; if not, power-on needs Wake-on-LAN.
-- `C4:GetBindingAddress` semantics, and whether `keep_connection` makes Director re-establish the
-  socket behind the driver's own state machine.
-- Whether Director accepts non-string values in proxy notification parameters, and whether
-  `SendToNetwork` / `ReceivedFromNetwork` are binary-clean.
+- Whether `keep_connection` makes Director re-establish the socket behind the driver's own state
+  machine, and how that interacts with the connect watchdog.
+- Long-run reconnection behaviour: unit reboot, network drop and controller restart have not yet been
+  exercised over days.
 
 The full list, with every review finding and its disposition, is in
 `docs/ai/implementation/2026-08-04-feature-control4-htp1-driver-ledger.md`.
