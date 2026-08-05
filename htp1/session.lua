@@ -55,10 +55,29 @@ function Session:_cancelTimers()
     if self.reconcileTimer then self.reconcileTimer:Cancel(); self.reconcileTimer = nil end
 end
 
-function Session:refresh()
+function Session:_sendGetMso()
     if self.transport:isOpen() then
         self.transport:send(Protocol.GET_MSO)
     end
+end
+
+-- A DELIBERATE re-request: from a connect, the reconcile watchdog, or the
+-- Composer action. Each of those gets a fresh failure budget.
+--
+-- Without that reset the cap has no way back. If the first document after a
+-- connect fails to parse three times, `connected` never becomes true, so no
+-- write, flush or reconcile ever runs, and an idle link delivers nothing else to
+-- reset the counter: pings and pongs are consumed inside the transport and never
+-- reach onMessage. The driver would sit on a live socket reporting "Not
+-- connected" forever, with even the Composer refresh action swallowed silently
+-- as failure four.
+--
+-- The reset lives here and NOT in the error path's own re-read, which calls
+-- _sendGetMso directly. Resetting there would zero the counter on every failure
+-- and restore the unthrottled request storm the cap exists to prevent.
+function Session:refresh()
+    self.parseFailures = 0
+    self:_sendGetMso()
 end
 
 function Session:onOpen()
@@ -86,7 +105,9 @@ function Session:onMessage(text)
         self.parseFailures = self.parseFailures + 1
         if self.parseFailures < MAX_PARSE_FAILURES then
             self.log:error("undecodable message from the unit: " .. message.err)
-            self:refresh()
+            -- Deliberately not refresh(): that resets the budget, which would
+            -- make this branch unthrottled again.
+            self:_sendGetMso()
         elseif self.parseFailures == MAX_PARSE_FAILURES then
             -- The cap: log exactly once here, then go quiet. Re-reading a
             -- reply that keeps failing to decode would only re-request it at

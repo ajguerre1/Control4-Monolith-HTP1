@@ -68,7 +68,10 @@ local function buildDriver()
     -- the identical jitter sequence and reconnect in lockstep after a shared
     -- network blip -- precisely what the jitter in transport.lua exists to
     -- prevent. Must run before the transport (and its jitter closure) exists.
-    math.randomseed(C4:GetDeviceID())
+    -- Guarded like the binding-address read: this is the first statement of the
+    -- constructor, so a nil or non-numeric return would kill the whole object
+    -- graph and leave every later entry point erroring on a nil DRIVER.
+    pcall(function() math.randomseed(C4:GetDeviceID()) end)
 
     local log = Log.new("HTP-1")
     log:setMode(Properties["Debug Mode"])
@@ -201,11 +204,25 @@ end
 -- with none. connect() already no-ops while a connection attempt is live, so
 -- this only matters while the transport is genuinely idle or waiting on a
 -- still-empty address.
+-- The installer has just given us an address, so drop back to the first rung:
+-- an unconfigured driver will have ratcheted the ladder to its 60 s cap, and
+-- making someone wait a minute after they finally typed the IP is the wrong
+-- first impression.
+local function onNetworkBindingChanged(idBinding)
+    if idBinding ~= Mapping.NETWORK_BINDING then return end
+    DRIVER.transport:resetBackoff()
+    DRIVER.transport:connect()
+end
+
 function OnBindingChanged(idBinding, class, bIsBound)
-    guard("OnBindingChanged", function()
-        if idBinding ~= Mapping.NETWORK_BINDING then return end
-        DRIVER.transport:connect()
-    end)
+    guard("OnBindingChanged", function() onNetworkBindingChanged(idBinding) end)
+end
+
+-- DriverWorks signals a network binding through its own callback rather than
+-- the control/AV one above. Which of the two fires is not settled without
+-- hardware, so both are defined and both are idempotent.
+function OnNetworkBindingChanged(idBinding, bIsBound)
+    guard("OnNetworkBindingChanged", function() onNetworkBindingChanged(idBinding) end)
 end
 
 function ReceivedFromNetwork(binding, port, data)

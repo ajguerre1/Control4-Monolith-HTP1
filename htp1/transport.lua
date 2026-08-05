@@ -228,6 +228,13 @@ function Transport:isOpen()
     return self.state == "open"
 end
 
+-- Drop back to the first rung. An unconfigured driver ratchets the ladder to its
+-- cap while it has no address to dial, and the attempt right after the installer
+-- supplies one should not inherit a 60 s wait.
+function Transport:resetBackoff()
+    self.backoffStep = 0
+end
+
 function Transport:send(text)
     if self.state ~= "open" then
         self.log:debug("dropping a write while", self.state)

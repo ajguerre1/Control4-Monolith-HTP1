@@ -137,6 +137,42 @@ return {
         end,
     },
     {
+        name = "a deliberate refresh restores the failure budget",
+        fn = function()
+            -- Without this the cap has no way back on a connection whose very
+            -- first document never parses: nothing else on an idle link reaches
+            -- onMessage, so the driver would sit on a live socket reporting
+            -- "Not connected" forever, with the Composer action swallowed too.
+            local s, transport = build()
+            s:start(); s:onOpen(); s:onMessage(msoMessage())
+            for _ = 1, 4 do s:onMessage("mso {not json") end
+
+            local capped = #transport.sent
+            s:onMessage("mso {not json")
+            H.equal(#transport.sent, capped, "still capped")
+
+            s:refresh()                     -- the Composer action, or a reconcile
+            local afterRefresh = #transport.sent
+            s:onMessage("mso {not json")
+            H.equal(#transport.sent, afterRefresh + 1,
+                "a deliberate re-request must restore the budget")
+        end,
+    },
+    {
+        name = "the error path's own re-read does not restore the budget",
+        fn = function()
+            -- If it did, the counter would zero on every failure and the cap
+            -- would never bite -- exactly the unthrottled storm it exists to
+            -- prevent.
+            local s, transport = build()
+            s:start(); s:onOpen(); s:onMessage(msoMessage())
+            local before = #transport.sent
+            for _ = 1, 20 do s:onMessage("mso {not json") end
+            H.equal(#transport.sent, before + 2,
+                "twenty failures must still stop after the cap, not re-read each time")
+        end,
+    },
+    {
         name = "a successfully parsed message resets the parse-failure counter",
         fn = function()
             -- Without the reset, two isolated bad frames days apart would
