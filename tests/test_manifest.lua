@@ -72,6 +72,48 @@ return {
         end,
     },
     {
+        name = "the proxy and control connections both exist in their own right",
+        fn = function()
+            local connections = parseConnections(readManifest())
+
+            -- Test 1 only greps for proxybindingid="5001", which every input
+            -- connection also carries, so the proxy's own connection block could
+            -- be deleted with the suite still green.
+            local proxy = connections[Mapping.PROXY_BINDING]
+            H.isTrue(proxy ~= nil, "connection 5001 should exist")
+            H.equal(proxy.type, 2, "the proxy connection is type 2")
+            H.isTrue(proxy.raw:find("RECEIVER", 1, true) ~= nil, "class RECEIVER")
+
+            -- Without 6001 the driver has no socket at all, and nothing else
+            -- asserted its presence.
+            local control = connections[Mapping.NETWORK_BINDING]
+            H.isTrue(control ~= nil, "connection 6001 should exist")
+            H.equal(control.type, 4, "a network connection is type 4")
+            H.isTrue(control.raw:find("TCP", 1, true) ~= nil, "class TCP")
+            H.isTrue(control.raw:find("<number>80</number>", 1, true) ~= nil, "port 80")
+            H.equal(control.raw:find("<delimiter", 1, true), nil,
+                "a delimiter would chop the byte stream the websocket framing needs intact")
+        end,
+    },
+    {
+        name = "no connection id is declared twice",
+        fn = function()
+            -- parseConnections keys on id, so a duplicate would silently
+            -- overwrite rather than fail, and the two blocks could disagree.
+            local xml = readManifest()
+            local seen, ids = {}, 0
+            for block in xml:gmatch("<connection.->(.-)</connection>") do
+                local id = block:match("<id>%s*(%d+)%s*</id>")
+                if id then
+                    ids = ids + 1
+                    H.equal(seen[id], nil, "connection id " .. id .. " is declared twice")
+                    seen[id] = true
+                end
+            end
+            H.isTrue(ids >= 24, "expected the full connection block, found " .. ids)
+        end,
+    },
+    {
         name = "the room end-point carries both audio selection and volume classes",
         fn = function()
             local connections = parseConnections(readManifest())
