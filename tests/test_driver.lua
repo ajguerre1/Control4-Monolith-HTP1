@@ -173,6 +173,62 @@ return {
         end,
     },
     {
+        name = "a variable that could not be created is never written to afterwards",
+        fn = function()
+            -- Without the created-set the driver would SetVariable a name that
+            -- does not exist, silently, on every change for its whole life.
+            loadDriver()
+            local realAdd = C4.AddVariable
+            C4.AddVariable = function(self, name, value, kind, readOnly)
+                if name == "VIDEO_HDR" then error("Director refused") end
+                return realAdd(self, name, value, kind, readOnly)
+            end
+            OnDriverInit()
+            C4.AddVariable = realAdd
+
+            H.isTrue(DRIVER.varCreated.VOLUME_DB, "the others are still created")
+            H.equal(DRIVER.varCreated.VIDEO_HDR, nil, "the failed one is not marked created")
+
+            mock.clearCalls()
+            goLive()
+            for _, c in ipairs(callsNamed("SetVariable")) do
+                H.isTrue(c.args[1] ~= "VIDEO_HDR",
+                    "a variable that was never created must never be written")
+            end
+        end,
+    },
+    {
+        name = "a fault in the variable layer cannot starve the proxy notification",
+        fn = function()
+            -- The proxy notification is what M1 depends on for volume, mute and
+            -- input feedback in Navigator, and it is proven on hardware. The
+            -- variables and events are newer; a fault in them must not take it
+            -- down with them.
+            loadDriver()
+            goLive()
+            local realNotify = DRIVER.proxy.notify
+            local notified = 0
+            DRIVER.proxy.notify = function(self, changes)
+                notified = notified + 1
+                return realNotify(self, changes)
+            end
+            local realSet = C4.SetVariable
+            C4.SetVariable = function() error("deliberate fault in the variable layer") end
+
+            pushUpdate("/volume", -33)
+
+            C4.SetVariable = realSet
+            DRIVER.proxy.notify = realNotify
+            H.equal(notified, 1, "the proxy was still notified despite the fault")
+
+            local logged = false
+            for _, line in ipairs(mock.printed) do
+                if line:find("deliberate fault in the variable layer", 1, true) then logged = true end
+            end
+            H.isTrue(logged, "and the fault was logged rather than swallowed")
+        end,
+    },
+    {
         name = "the refresh action re-reads the document",
         fn = function()
             loadDriver()

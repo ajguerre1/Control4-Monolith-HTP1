@@ -124,11 +124,10 @@ local EVENTS = {
 DRIVER.EVENTS = EVENTS -- for tests; the code below always uses the local.
 
 local function initVariables()
-    DRIVER.varCache = {}
+    DRIVER.varCache, DRIVER.varCreated = {}, {}
     local connected = DRIVER.session and DRIVER.session.connected or false
     for name, fn in pairs(VARIABLES) do
         local value = fn(DRIVER.state, connected)
-        DRIVER.varCache[name] = value
         -- Read-only, and isolated. Read-only because an external write would
         -- desynchronise varCache: the cache would still hold our last value, so
         -- we would not rewrite until the computed value moved, and the variable
@@ -143,7 +142,13 @@ local function initVariables()
         local ok, err = pcall(function()
             C4:AddVariable(name, value, "STRING", true)
         end)
-        if not ok then
+        if ok then
+            DRIVER.varCreated[name] = true
+            DRIVER.varCache[name] = value
+        else
+            -- Not created, so never updated. Without this the driver would
+            -- write to a name that does not exist, silently, on every change
+            -- for the life of the driver.
             DRIVER.log:error("could not create variable " .. name .. ": " .. tostring(err))
         end
     end
@@ -159,7 +164,7 @@ end
 local function updateVariables(connected)
     for name, fn in pairs(VARIABLES) do
         local value = fn(DRIVER.state, connected)
-        if DRIVER.varCache[name] ~= value then
+        if DRIVER.varCreated[name] and DRIVER.varCache[name] ~= value then
             DRIVER.varCache[name] = value
             C4:SetVariable(name, value)
         end
