@@ -40,16 +40,21 @@ function Protocol.parse(text)
     local body = text:sub(space + 1)
 
     local ok, value = decodeQuietly(body)
-    if not ok then
-        return { verb = verb, err = "undecodable JSON argument (" .. #body .. " bytes)" }
+    if ok and value ~= nil then
+        return { verb = verb, arg = value }
     end
-    if value == nil then
-        -- Valid JSON that decoded to null. No path this driver reads takes a
-        -- null, so it is still an error -- but not a decoding failure.
+
+    -- A nil result does NOT mean the payload was `null`. The codec catches its
+    -- own runtime errors internally and returns nil from a normal return, so
+    -- garbage decodes to nil too. Only the literal token tells them apart, and
+    -- getting this backwards would report malformed input as valid-but-null.
+    if ok and body:match("^%s*null%s*$") then
+        -- Valid JSON. No path this driver reads takes a null, so it is still an
+        -- error, but not a decoding failure.
         return { verb = verb, err = "JSON argument decoded to null" }
     end
 
-    return { verb = verb, arg = value }
+    return { verb = verb, err = "undecodable JSON argument (" .. #body .. " bytes)" }
 end
 
 function Protocol.op(operation, path, value)

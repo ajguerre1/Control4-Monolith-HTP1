@@ -130,4 +130,18 @@ return {
                 "the message should say null rather than blame the decoder: " .. message.err)
         end,
     },
+    {
+        name = "garbage is reported as undecodable, not as null",
+        fn = function()
+            -- The codec catches its own runtime errors and returns nil normally,
+            -- so a nil result cannot distinguish garbage from a literal null.
+            -- Getting this backwards would mislabel every malformed message.
+            for _, body in ipairs({ "{not json", "", "[1,", "\"unterminated" }) do
+                local message = Protocol.parse("mso " .. body)
+                H.isTrue(message.err ~= nil, "should be an error: " .. body)
+                H.isTrue(message.err:find("undecodable", 1, true) ~= nil,
+                    "should blame decoding, not null, for " .. body .. ": " .. message.err)
+            end
+        end,
+    },
 }
