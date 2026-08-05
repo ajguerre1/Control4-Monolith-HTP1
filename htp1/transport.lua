@@ -39,6 +39,19 @@ function Transport.new(opts)
         state   = "idle",
         rxBuf   = "",
         reader  = nil,
+        pingIntervalMs = opts.pingIntervalMs or 30000,
+        pongTimeoutMs  = opts.pongTimeoutMs or 10000,
+        backoffMs      = opts.backoffMs or { 2000, 4000, 8000, 16000, 30000, 60000 },
+        jitter         = opts.jitter or function(ms)
+            -- +/-20 %. Two instances on one controller must not reconnect in
+            -- lockstep after every network blip.
+            return math.floor(ms * (0.8 + math.random() * 0.4))
+        end,
+        backoffStep    = 0,
+        deliberate     = false,
+        pingTimer      = nil,
+        pongTimer      = nil,
+        reconnectTimer = nil,
     }, Transport)
     return t
 end
@@ -48,6 +61,7 @@ function Transport:connect()
         return
     end
     self.rxBuf, self.reader = "", nil
+    self.deliberate = false
     self.state = "connecting"
     self.log:debug("connecting to", self.host)
     C4:NetConnect(self.binding, self.port)
@@ -57,12 +71,19 @@ function Transport:_shutdown(reason)
     if self.state == "closed" or self.state == "idle" then return end
     self.state = "closed"
     self.rxBuf, self.reader = "", nil
+    self:_stopKeepalive()
     C4:NetDisconnect(self.binding, self.port)
     self.log:debug("closed:", reason)
     self.onClose(reason)
+    self:_scheduleReconnect()
 end
 
 function Transport:close()
+    self.deliberate = true
+    if self.reconnectTimer then
+        self.reconnectTimer:Cancel()
+        self.reconnectTimer = nil
+    end
     self:_shutdown("closed by the driver")
 end
 
@@ -116,6 +137,8 @@ function Transport:_completeHandshake(head)
 
     self.state = "open"
     self.reader = Frame.newReader()
+    self.backoffStep = 0
+    self:_startKeepalive()
     self.log:debug("websocket open")
     self.onOpen()
     return true
@@ -145,7 +168,87 @@ function Transport:onData(data)
     end
 end
 
--- Frame handling arrives in the next task; declared here so onData has a target.
-function Transport:_consume(_) end
+function Transport:isOpen()
+    return self.state == "open"
+end
+
+function Transport:send(text)
+    if self.state ~= "open" then
+        self.log:debug("dropping a write while", self.state)
+        return false
+    end
+    C4:SendToNetwork(self.binding, self.port,
+        Frame.encode(Frame.OP.TEXT, text, self.randomBytes(4)))
+    return true
+end
+
+function Transport:_sendControl(opcode, payload)
+    if self.state ~= "open" then return end
+    C4:SendToNetwork(self.binding, self.port,
+        Frame.encode(opcode, payload or "", self.randomBytes(4)))
+end
+
+function Transport:_consume(data)
+    self.reader:push(data)
+    while true do
+        local message, err = self.reader:next()
+        if err then return self:_shutdown("framing error: " .. err) end
+        if not message then return end
+
+        if message.opcode == Frame.OP.TEXT then
+            self.onMessage(message.payload)
+        elseif message.opcode == Frame.OP.PING then
+            self:_sendControl(Frame.OP.PONG, message.payload)
+        elseif message.opcode == Frame.OP.PONG then
+            self:_clearPongDeadline()
+        elseif message.opcode == Frame.OP.CLOSE then
+            self:_sendControl(Frame.OP.CLOSE, "")
+            return self:_shutdown("the unit closed the connection")
+        end
+        -- Binary frames are not part of this protocol and are ignored.
+    end
+end
+
+function Transport:_clearPongDeadline()
+    if self.pongTimer then
+        self.pongTimer:Cancel()
+        self.pongTimer = nil
+    end
+end
+
+function Transport:_startKeepalive()
+    self:_stopKeepalive()
+    self.pingTimer = C4:SetTimer(self.pingIntervalMs, function()
+        if self.state ~= "open" then return end
+        self:_sendControl(Frame.OP.PING, "")
+        if not self.pongTimer then
+            -- A half-open TCP connection can sit unnoticed for many minutes, so
+            -- liveness is decided here rather than left to the network stack.
+            self.pongTimer = C4:SetTimer(self.pongTimeoutMs, function()
+                self.pongTimer = nil
+                self:_shutdown("no pong within " .. self.pongTimeoutMs .. " ms")
+            end, false)
+        end
+    end, true)
+end
+
+function Transport:_stopKeepalive()
+    if self.pingTimer then self.pingTimer:Cancel(); self.pingTimer = nil end
+    self:_clearPongDeadline()
+end
+
+function Transport:_scheduleReconnect()
+    if self.deliberate then return end
+    if self.reconnectTimer then return end
+
+    self.backoffStep = math.min(self.backoffStep + 1, #self.backoffMs)
+    local delay = self.jitter(self.backoffMs[self.backoffStep])
+    self.log:debug("reconnecting in", delay, "ms")
+    self.reconnectTimer = C4:SetTimer(delay, function()
+        self.reconnectTimer = nil
+        self.state = "idle"
+        self:connect()
+    end, false)
+end
 
 return Transport

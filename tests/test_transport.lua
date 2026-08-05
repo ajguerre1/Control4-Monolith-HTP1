@@ -2,6 +2,7 @@ local H = require("tests.harness")
 local mock = H.mock
 local Transport = require("htp1.transport")
 local Log = require("htp1.log")
+local Frame = require("htp1.frame")
 
 -- A transport wired to recording callbacks, with deterministic "randomness".
 local function build(overrides)
@@ -182,6 +183,183 @@ return {
             t:onConnectionStatus("OFFLINE")
             H.equal(t.state, "closed")
             H.count(events.closed, 1)
+        end,
+    },
+    {
+        name = "an open transport sends a masked text frame",
+        fn = function()
+            local t = build()
+            t:connect(); t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            mock.clearCalls()
+            t:send("getmso")
+            H.count(mock.sent, 1)
+            local raw = mock.sent[1]
+            H.equal(raw:byte(1), 0x81, "FIN with the TEXT opcode")
+            H.equal(raw:byte(2), 0x80 + 6, "masked, six bytes")
+            H.equal(Frame.applyMask(raw:sub(7), raw:sub(3, 6)), "getmso")
+        end,
+    },
+    {
+        name = "sending while not open writes nothing",
+        fn = function()
+            local t = build()
+            t:connect()
+            t:send("getmso")
+            H.count(mock.sent, 0, "a queued write must not be invented at this layer")
+        end,
+    },
+    {
+        name = "a text frame is delivered to onMessage",
+        fn = function()
+            local t, events = build()
+            t:connect(); t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            t:onData("\129\4mso ")
+            H.count(events.messages, 1)
+            H.equal(events.messages[1], "mso ")
+        end,
+    },
+    {
+        name = "a payload arriving with the handshake response is not lost",
+        fn = function()
+            local t, events = build()
+            t:connect(); t:onConnectionStatus("ONLINE")
+            t:onData(ACCEPT .. "\129\4mso ")
+            H.equal(t.state, "open")
+            H.count(events.messages, 1, "the trailing frame must be consumed")
+        end,
+    },
+    {
+        name = "a server ping is answered with a pong carrying the same payload",
+        fn = function()
+            local t = build()
+            t:connect(); t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            mock.clearCalls()
+            t:onData("\137\4ping")
+            H.count(mock.sent, 1)
+            local raw = mock.sent[1]
+            H.equal(raw:byte(1), 0x8A, "FIN with the PONG opcode")
+            H.equal(Frame.applyMask(raw:sub(7), raw:sub(3, 6)), "ping")
+        end,
+    },
+    {
+        name = "a server close frame shuts the transport down",
+        fn = function()
+            local t, events = build()
+            t:connect(); t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            t:onData("\136\0")
+            H.equal(t.state, "closed")
+            H.count(events.closed, 1)
+        end,
+    },
+    {
+        name = "a framing violation closes rather than desynchronising",
+        fn = function()
+            local t, events = build()
+            t:connect(); t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            t:onData("\129\132\1\2\3\4abcd")   -- a masked server frame
+            H.equal(t.state, "closed")
+            H.isTrue(events.closed[1]:find("masked", 1, true) ~= nil,
+                "the reason should name the fault: " .. tostring(events.closed[1]))
+        end,
+    },
+    {
+        name = "a ping goes out on the keepalive interval",
+        fn = function()
+            local t = build()
+            t:connect(); t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            mock.clearCalls()
+            mock.advance(30000)
+            H.count(mock.sent, 1)
+            H.equal(mock.sent[1]:byte(1), 0x89, "a PING frame")
+        end,
+    },
+    {
+        name = "a pong within the timeout keeps the connection",
+        fn = function()
+            local t = build()
+            t:connect(); t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            mock.advance(30000)
+            t:onData("\138\0")          -- PONG
+            mock.advance(10000)
+            H.equal(t.state, "open", "an answered ping must not close the socket")
+        end,
+    },
+    {
+        name = "a missing pong is treated as a dead socket",
+        fn = function()
+            local t, events = build()
+            t:connect(); t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            mock.advance(30000)         -- ping sent
+            mock.advance(10000)         -- pong deadline passes
+            H.equal(t.state, "closed")
+            H.isTrue(events.closed[1]:find("pong", 1, true) ~= nil,
+                "the reason should name the missing pong: " .. tostring(events.closed[1]))
+        end,
+    },
+    {
+        name = "the backoff ladder is walked and then held",
+        fn = function()
+            local delays = {}
+            local t = build({ jitter = function(ms) table.insert(delays, ms) return ms end })
+            for _ = 1, 8 do
+                t:connect()
+                t:onConnectionStatus("OFFLINE")
+                mock.advance(60000)
+            end
+            H.equal(delays[1], 2000)
+            H.equal(delays[2], 4000)
+            H.equal(delays[3], 8000)
+            H.equal(delays[4], 16000)
+            H.equal(delays[5], 30000)
+            H.equal(delays[6], 60000)
+            H.equal(delays[7], 60000, "the ladder holds at its last rung")
+        end,
+    },
+    {
+        name = "a successful open resets the backoff ladder",
+        fn = function()
+            local delays = {}
+            local t = build({ jitter = function(ms) table.insert(delays, ms) return ms end })
+            t:connect(); t:onConnectionStatus("OFFLINE"); mock.advance(60000)
+            t:connect(); t:onConnectionStatus("OFFLINE"); mock.advance(60000)
+            H.equal(delays[2], 4000, "the ladder advanced")
+            t:connect(); t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            t:onConnectionStatus("OFFLINE")
+            H.equal(delays[3], 2000, "a good connection resets the ladder")
+        end,
+    },
+    {
+        name = "the scheduled reconnect actually reconnects",
+        fn = function()
+            local t = build({ jitter = function(ms) return ms end })
+            t:connect()
+            mock.clearCalls()
+            t:onConnectionStatus("OFFLINE")
+            mock.advance(1999)
+            local before = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then before = before + 1 end
+            end
+            H.equal(before, 0, "not yet")
+            mock.advance(1)
+            local after = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then after = after + 1 end
+            end
+            H.equal(after, 1, "reconnected on schedule")
+        end,
+    },
+    {
+        name = "an explicit close does not schedule a reconnect",
+        fn = function()
+            local t = build({ jitter = function(ms) return ms end })
+            t:connect(); t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            mock.clearCalls()
+            t:close()
+            mock.advance(120000)
+            for _, c in ipairs(mock.calls) do
+                H.isTrue(c.name ~= "NetConnect", "a deliberate close stays closed")
+            end
         end,
     },
 }
