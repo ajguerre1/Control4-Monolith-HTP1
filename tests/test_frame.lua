@@ -229,4 +229,53 @@ return {
             H.equal(m.opcode, Frame.OP.TEXT)
         end,
     },
+    {
+        name = "a fragmented message is capped in total, not only per frame",
+        fn = function()
+            local saved = Frame.MAX_PAYLOAD
+            Frame.MAX_PAYLOAD = 10
+            local r = Frame.newReader()
+            r:push("\1\6aaaaaa")            -- TEXT, FIN clear, 6 bytes
+            r:next()
+            r:push("\0\6bbbbbb")            -- CONT, FIN clear, 6 more: 12 > 10
+            local message, err = r:next()
+            Frame.MAX_PAYLOAD = saved       -- restore before asserting
+            H.equal(message, nil)
+            H.isTrue(err ~= nil and err:find("cap", 1, true) ~= nil,
+                "error should name the cap: " .. tostring(err))
+        end,
+    },
+    {
+        name = "a reader that has errored stays errored",
+        fn = function()
+            local r = Frame.newReader()
+            r:push("\128\3one")             -- CONT with FIN, nothing open
+            local _, first = r:next()
+            H.isTrue(first ~= nil, "the violation should be reported")
+            r:push("\129\1a")               -- a perfectly valid frame afterwards
+            local message, again = r:next()
+            H.equal(message, nil, "a corrupt stream must not silently resume")
+            H.equal(again, first, "the same error should keep being reported")
+        end,
+    },
+    {
+        name = "a truncated 16-bit length header consumes nothing",
+        fn = function()
+            local r = Frame.newReader()
+            r:push("\129\126\1")            -- marker 126, only 1 of 2 length bytes
+            H.equal(r:next(), nil)
+            r:push(string.char(44) .. string.rep("y", 300))
+            H.equal(#r:next().payload, 300, "the frame completes once the rest arrives")
+        end,
+    },
+    {
+        name = "a truncated 64-bit length header consumes nothing",
+        fn = function()
+            local r = Frame.newReader()
+            r:push("\129\127" .. string.char(0, 0, 0, 0, 0, 0, 1))  -- 7 of 8 bytes
+            H.equal(r:next(), nil)
+            r:push(string.char(44) .. string.rep("z", 300))
+            H.equal(#r:next().payload, 300, "the frame completes once the rest arrives")
+        end,
+    },
 }

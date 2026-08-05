@@ -102,18 +102,29 @@ local Reader = {}
 Reader.__index = Reader
 
 function Frame.newReader()
-    return setmetatable({ buf = "", fragment = nil, fragmentOp = nil }, Reader)
+    return setmetatable({ buf = "", fragment = nil, fragmentOp = nil, failed = nil }, Reader)
 end
 
 function Reader:push(chunk)
     self.buf = self.buf .. chunk
 end
 
+-- Once the stream is corrupt it stays corrupt. Without this, the two
+-- reader-level violations below would leave the buffer already advanced past
+-- the offending frame, so a caller that ignored the error would silently
+-- resume mid-stream.
+function Reader:_fail(err)
+    self.failed = err
+    return nil, err
+end
+
 -- Returns a whole message, or nil when more bytes are needed, or (nil, err).
 function Reader:next()
+    if self.failed then return nil, self.failed end
+
     while true do
         local frame, consumed, err = Frame.decode(self.buf)
-        if err then return nil, err end
+        if err then return self:_fail(err) end
         if not frame then return nil end
         self.buf = sub(self.buf, consumed + 1)
 
@@ -125,12 +136,18 @@ function Reader:next()
 
         if frame.opcode == Frame.OP.CONT then
             if not self.fragment then
-                return nil, "continuation frame with nothing to continue"
+                return self:_fail("continuation frame with nothing to continue")
+            end
+            -- decode caps each frame, but nothing capped the total until here:
+            -- endless sub-cap continuations would grow this string without bound.
+            if #self.fragment + #frame.payload > Frame.MAX_PAYLOAD then
+                return self:_fail("fragmented message exceeds the "
+                    .. Frame.MAX_PAYLOAD .. " byte cap")
             end
             self.fragment = self.fragment .. frame.payload
         else
             if self.fragment then
-                return nil, "new data frame while a fragmented message is open"
+                return self:_fail("new data frame while a fragmented message is open")
             end
             self.fragment, self.fragmentOp = frame.payload, frame.opcode
         end
