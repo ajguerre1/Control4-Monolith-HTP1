@@ -114,7 +114,8 @@ function DRIVER.onConnected(connected)
     C4:UpdateProperty("Connection Status", connected and "Connected" or "Not connected")
     if not connected then return end
 
-    C4:UpdateProperty("Firmware Version", DRIVER.state.fields.firmware or "")
+    C4:UpdateProperty("System Software Version", DRIVER.state.fields.systemVersion or "")
+    C4:UpdateProperty("AV Controller Version", DRIVER.state.fields.avControllerVersion or "")
     C4:UpdateProperty("Serial Number", DRIVER.state.fields.serial or "")
     DRIVER.proxy:announce()
 end

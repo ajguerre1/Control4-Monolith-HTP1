@@ -111,6 +111,13 @@ function COMMANDS.ON(self)
 end
 
 function COMMANDS.OFF(self)
+    -- "Do Nothing" is for a processor that is meant to stay powered: a room
+    -- turning off, or a stray program, should not be able to take the whole
+    -- system down. The room still goes off; the unit is simply left alone.
+    if self.powerOffAction == "Do Nothing" then
+        self.log:debug("room off ignored: Power Off Action is Do Nothing")
+        return
+    end
     self.session:write("/powerAction", self.powerOffAction == "Sleep" and "sleep" or "off")
 end
 

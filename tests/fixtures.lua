@@ -30,7 +30,10 @@ function F.modern()
         },
         cal = { vpl = -50, vph = 0, zeroPoint = 0, diracactive = "on", currentdiracslot = 0 },
         inputs = baseInputs(),
-        versions = { avController = "5.96 Built Jul  8 2026, 11:45:00\n", SerialNumber = "0001" },
+        -- swVer is the release the unit calls itself; avController is an internal
+        -- component on its own numbering. Both are reported, and they never match.
+        versions = { avController = "5.96 Built Jul  8 2026, 11:45:00\n", swVer = "V2.1.1",
+                     SerialNumber = "0001" },
         channeltrim = {}, dialnorm = 0, shaker = {}, secondaryVolume = -40,
         loudness = "off", night = "off", dialogEnh = 3, bassenhance = "off",
     }
@@ -49,7 +52,8 @@ function F.legacy()
         upmix = { select = "dolby", dolby = { cs = false }, dts = { ws = true } },
         cal = { vpl = -50, vph = 0, zeroPoint = 0, diracactive = "off", currentdiracslot = 1 },
         inputs = baseInputs(),
-        versions = { avController = "4.91 Built Dec 23 2024, 11:23:51\n", SerialNumber = "0002" },
+        versions = { avController = "4.91 Built Dec 23 2024, 11:23:51\n", swVer = "V1.13.3",
+                     SerialNumber = "0002" },
         secondVolume = -40, vu = {},
         loudness = "off", night = "off", dialogEnh = 3, bassenhance = "off",
     }

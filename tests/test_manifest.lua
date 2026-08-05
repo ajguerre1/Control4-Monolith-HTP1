@@ -38,6 +38,36 @@ return {
         end,
     },
     {
+        name = "the driver claims no room endpoints on its own",
+        fn = function()
+            local xml = readManifest()
+            -- The receiver proxy's own definition claims AudioSelectionDevice,
+            -- AudioVolumeDevice, VideoAudioSelectionDevice,
+            -- VideoAudioVolumeDevice and VideoSelectionDevice the moment the
+            -- driver joins a room. An empty element here overrides that. Losing
+            -- it would silently hand a processor every endpoint in the room,
+            -- volume included, before anyone chose to give it any.
+            local block = xml:match("<roomAutoBind>(.-)</roomAutoBind>")
+            H.isTrue(block ~= nil, "an explicit roomAutoBind override should be present")
+            H.equal(block:match("^%s*$") ~= nil, true,
+                "it must be empty; found: " .. tostring(block))
+        end,
+    },
+    {
+        name = "power off offers a do-nothing option",
+        fn = function()
+            -- For a processor meant to stay powered, so a room turning off or a
+            -- stray program cannot take the system down.
+            local xml = readManifest()
+            local items = xml:match("<name>Power Off Action</name>.-<items>(.-)</items>")
+            H.isTrue(items ~= nil, "the property should declare items")
+            for _, choice in ipairs({ "Standby", "Sleep", "Do Nothing" }) do
+                H.isTrue(items:find("<item>" .. choice .. "</item>", 1, true) ~= nil,
+                    "missing choice: " .. choice)
+            end
+        end,
+    },
+    {
         name = "auto update is disabled so the director cannot substitute a build",
         fn = function()
             local xml = readManifest()
@@ -152,7 +182,8 @@ return {
         name = "every property the driver reads is declared",
         fn = function()
             local xml = readManifest()
-            for _, name in ipairs({ "Driver Version", "Firmware Version", "Serial Number", "Model",
+            for _, name in ipairs({ "Driver Version", "System Software Version",
+                                    "AV Controller Version", "Serial Number", "Model",
                                     "Connection Status", "Maximum Volume", "Volume Ramp Rate",
                                     "Power Off Action", "Adopt Input Labels", "Debug Mode" }) do
                 H.isTrue(xml:find("<name>" .. name .. "</name>", 1, true) ~= nil,

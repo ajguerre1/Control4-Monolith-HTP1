@@ -6,8 +6,17 @@
 	<model>HTP-1</model>
 	<created>08/04/2026 12:00</created>
 	<modified>08/04/2026 12:00</modified>
-	<version>100</version>
+	<version>101</version>
 	<auto_update>false</auto_update>
+	<!-- Deliberately empty, overriding the receiver proxy's own roomAutoBind.
+	     That proxy claims AudioSelectionDevice, AudioVolumeDevice,
+	     VideoAudioSelectionDevice, VideoAudioVolumeDevice and
+	     VideoSelectionDevice the moment the driver is added to a room, so a
+	     processor silently takes over every endpoint including volume before
+	     anyone has decided it should. Which device owns a room's audio and
+	     video is the installer's call, so this driver claims nothing and waits
+	     to be assigned. -->
+	<roomAutoBind></roomAutoBind>
 	<control>lua_gen</control>
 	<controlmethod>IP</controlmethod>
 	<driver>DriverWorks</driver>
@@ -27,7 +36,16 @@
 				<default>HTP-1</default>
 			</property>
 			<property>
-				<name>Firmware Version</name>
+				<name>System Software Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<!-- An internal component version on its own numbering, not the
+			     release the unit calls itself. Kept because it is useful when
+			     talking to support, but named for what it actually is. -->
+			<property>
+				<name>AV Controller Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
 				<default></default>
@@ -80,6 +98,7 @@
 				<items>
 					<item>Standby</item>
 					<item>Sleep</item>
+					<item>Do Nothing</item>
 				</items>
 				<default>Standby</default>
 				<readonly>false</readonly>

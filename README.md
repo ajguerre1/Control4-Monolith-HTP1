@@ -3,10 +3,10 @@
 A [Control4](https://www.control4.com/) DriverWorks driver that exposes the Monoprice Monolith HTP-1
 AV processor as a `receiver`-class device over IP.
 
-> **Status: v1.0.0 pre-release. Not yet run on a controller.**
-> The driver is complete for its first milestone and has 202 offline tests, but it has never been
-> installed in a real project or connected to a real unit. Treat this as ready to *trial*, not ready
-> to rely on. See [Known unknowns](#known-unknowns).
+> **Status: v1.0.1 pre-release. In trial on real hardware.**
+> The driver is complete for its first milestone, has 205 offline tests, and has been installed in a
+> real Control4 project — v1.0.1 fixes the first three findings from that install. It is not yet
+> proven in daily use. See [Known unknowns](#known-unknowns).
 
 ## What it does today
 
@@ -88,6 +88,10 @@ virtual time. `tools/fake-htp1.py` serves the real protocol locally, with delibe
 
 These cannot be settled without a controller, and are the first things to check on a trial:
 
+- **Whether the empty `<roomAutoBind>` actually suppresses auto-binding.** The `receiver` proxy claims
+  every room endpoint the moment the driver joins a room, and an empty element in this driver's own
+  manifest is the only available lever. Nothing on a development machine can prove Composer honours
+  the override, so confirm it by adding the driver to a fresh room and checking it arrives unbound.
 - Connection 7000 is the only proxy-addressed connection without `proxybindingid="5001"`. If room
   volume and mute feedback do not appear, check this first.
 - Whether the unit keeps its network stack alive with `powerIsOn` false. Both reference units report
