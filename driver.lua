@@ -413,10 +413,30 @@ local ACTIONS = {
     end,
 }
 
+-- Composer's Actions tab does NOT send an action's <command> as the command.
+-- It sends the literal "LUA_ACTION", with the declared name in tParams.ACTION.
+-- Dispatching on the command alone matched nothing and returned in silence, so
+-- every action in this driver did nothing at all and said nothing about it.
+--
+-- The direct form is still accepted: it costs one lookup and is how a
+-- programming command would arrive if this driver ever declares one.
 function ExecuteCommand(command, params)
     guard("ExecuteCommand(" .. tostring(command) .. ")", function()
-        local action = ACTIONS[command]
-        if action then action(params or {}) end
+        params = params or {}
+
+        local name = command
+        if command == "LUA_ACTION" then name = params.ACTION end
+
+        local action = ACTIONS[name]
+        if action then
+            action(params)
+            return
+        end
+
+        -- Never silent again. An unrecognised action is a wiring bug, and this
+        -- one hid behind a no-op through two releases and a field install.
+        print("HTP-1: no handler for action " .. tostring(name) ..
+            " (command " .. tostring(command) .. ")")
     end)
 end
 
