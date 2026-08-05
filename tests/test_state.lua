@@ -378,20 +378,26 @@ return {
                     SurroundMode = "Dolby Surround",
                     DECSourceProgram = "PCM",
                     DECProgramFormat = "2.0.0",
-                    DECSampleRate = "48 kHz",
+                    DECSampleRate = "44.1 kHz",
                     ENCListeningFormat = "5.2.2t",
-                    ENCSampleRate = "48 kHz",
+                    ENCSampleRate = "96 kHz",
                     DiracState = "off",
                     raw = { decoderSampleRateEnum = 5 },
                 } },
             })
-            H.equal(s.fields.surroundMode, "Dolby Surround")
-            H.equal(s.fields.decSourceProgram, "PCM")
-            H.equal(s.fields.decProgramFormat, "2.0.0")
-            H.equal(s.fields.encListeningFormat, "5.2.2t")
-            H.equal(s.fields.diracState, "off")
-            H.isTrue(changes.surroundMode and changes.decSourceProgram and
-                changes.decProgramFormat and changes.encListeningFormat and changes.diracState)
+            -- All seven, since the test claims "everything beneath it". The two
+            -- sample rates differ from the fixture on purpose: with the same
+            -- value they would pass whether or not they were re-derived.
+            local expected = {
+                surroundMode = "Dolby Surround", decSourceProgram = "PCM",
+                decProgramFormat = "2.0.0", decSampleRate = "44.1 kHz",
+                encListeningFormat = "5.2.2t", encSampleRate = "96 kHz",
+                diracState = "off",
+            }
+            for field, value in pairs(expected) do
+                H.equal(s.fields[field], value, field)
+                H.isTrue(changes[field], field .. " should be reported as changed")
+            end
             H.equal(s.fields.raw, nil, "the raw sub-table is never projected")
         end,
     },
