@@ -15,6 +15,8 @@ local SUITES = {
     "tests.test_transport",
     "tests.test_session",
     "tests.test_manifest",
+    "tests.test_proxy",
+    "tests.test_driver",
 }
 
 local GREEN, RED, DIM, RESET = "\27[32m", "\27[31m", "\27[2m", "\27[0m"
