@@ -121,6 +121,21 @@ return {
         end,
     },
     {
+        name = "a tie always resolves quieter, for either sign of the range",
+        fn = function()
+            -- Over -50..0 every odd percentage lands exactly on a half-dB, so
+            -- ties decide about half of all inputs. A volume control must never
+            -- end up louder than asked.
+            H.equal(Mapping.percentToDb(41, -50, 0), -30, "-29.5 goes to -30")
+            H.equal(Mapping.percentToDb(43, -50, 0), -29, "-28.5 goes to -29")
+            H.equal(Mapping.percentToDb(99, -50, 0), -1, "-0.5 goes to -1")
+            -- Sign-agnostic: a positive range must still resolve ties downward,
+            -- which rounding half away from zero would not do.
+            H.equal(Mapping.percentToDb(50, 0, 5), 2, "2.5 goes to 2, not 3")
+            H.equal(Mapping.percentToDb(50, -5, 0), -3, "-2.5 goes to -3")
+        end,
+    },
+    {
         name = "non-numeric input yields nil rather than an arithmetic error",
         fn = function()
             H.equal(Mapping.dbToPercent(nil, -50, 0), nil)

@@ -95,14 +95,19 @@ local function clamp(value, low, high)
     return value
 end
 
--- Round half away from zero, so a tie such as -29.5 rounds to -30, not -29.
--- math.floor(x + 0.5) alone would round every tie up, which is wrong once x
--- can be negative -- and dB values here usually are.
-local function round(x)
-    if x >= 0 then
-        return math.floor(x + 0.5)
-    end
-    return -math.floor(-x + 0.5)
+-- Nearest whole number, ties going DOWN.
+--
+-- The tie rule is not a detail: over the range both units report (-50..0 dB),
+-- every odd percentage lands exactly on a half-dB, so ties decide roughly half
+-- of all inputs. On a tie a volume control should end up quieter than asked,
+-- never louder, so ties resolve toward the lower value.
+--
+-- math.ceil(x - 0.5) states that directly and holds for either sign. Rounding
+-- half away from zero would also look right here only because these dB values
+-- are always negative -- it would round a tie UP, louder, if a unit ever
+-- reported a positive vph.
+local function roundHalfDown(x)
+    return math.ceil(x - 0.5)
 end
 
 -- Control4 rooms work in 0..100; the unit works in whole dB over the range it
@@ -113,7 +118,7 @@ function Mapping.dbToPercent(db, vpl, vph)
     if not (db and vpl and vph) then return nil end
     if vph <= vpl then return 0 end
     local percent = (db - vpl) / (vph - vpl) * 100
-    return clamp(round(percent), 0, 100)
+    return clamp(roundHalfDown(percent), 0, 100)
 end
 
 function Mapping.percentToDb(percent, vpl, vph)
@@ -121,7 +126,7 @@ function Mapping.percentToDb(percent, vpl, vph)
     if not (percent and vpl and vph) then return nil end
     if vph <= vpl then return vpl end
     local db = vpl + clamp(percent, 0, 100) / 100 * (vph - vpl)
-    return clamp(round(db), vpl, vph)
+    return clamp(roundHalfDown(db), vpl, vph)
 end
 
 return Mapping
