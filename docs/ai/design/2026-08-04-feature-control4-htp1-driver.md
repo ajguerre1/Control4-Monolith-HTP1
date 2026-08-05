@@ -214,11 +214,13 @@ transport's job**, so a replacement implementation brings its own reconnection a
 than needing the rest of the driver rearranged around it. `session.lua` only ever sees `open`,
 `message`, `closed`.
 
-`Sec-WebSocket-Accept` validation is best-effort. `C4:Base64Encode` and `C4:Hash` both appear in
-shipped Control4 drivers, but whether `C4:Hash` accepts `"SHA1"` on the target OS is unconfirmed. If
-it does, the driver validates; if not, it logs once at debug and accepts a well-formed `101`. The
-real assurance that our framing and masking are correct comes from the fake server, which validates
-them strictly.
+**`Sec-WebSocket-Accept` is not validated** — revised during planning from the best-effort approach
+first written here, which would have depended on `C4:Hash` supporting SHA-1. The link is `ws://` with
+no TLS and no authentication, so anyone positioned to forge the accept header can already forge every
+frame that follows; validating it defends against nothing. What the handshake must catch is *reaching
+the wrong service*, which a `101` plus an `Upgrade: websocket` header does. This also closes the
+open question about `C4:Hash`. Assurance that our framing and masking are correct comes instead from
+cross-checking the codec against Python's `websockets` implementation in both directions.
 
 ### WebSocket client
 
