@@ -6,7 +6,7 @@
 	<model>HTP-1</model>
 	<created>08/04/2026 12:00</created>
 	<modified>08/04/2026 12:00</modified>
-	<version>101</version>
+	<version>102</version>
 	<auto_update>false</auto_update>
 	<!-- Deliberately empty, overriding the receiver proxy's own roomAutoBind.
 	     That proxy claims AudioSelectionDevice, AudioVolumeDevice,
@@ -103,16 +103,6 @@
 				<default>Standby</default>
 				<readonly>false</readonly>
 			</property>
-			<property>
-				<name>Adopt Input Labels</name>
-				<type>LIST</type>
-				<items>
-					<item>Yes</item>
-					<item>No</item>
-				</items>
-				<default>Yes</default>
-				<readonly>false</readonly>
-			</property>
 			<!-- "On for 15 Minutes" cancels itself, so a driver left in debug
 			     cannot fill the Director log indefinitely. -->
 			<property>
@@ -133,8 +123,8 @@
 				<command>REFRESH_FROM_DEVICE</command>
 			</action>
 			<action>
-				<name>Rename Inputs From Device Labels</name>
-				<command>ADOPT_INPUT_LABELS</command>
+				<name>Print Input Labels</name>
+				<command>PRINT_INPUT_LABELS</command>
 			</action>
 			<action>
 				<name>Print Driver State</name>
@@ -377,4 +367,36 @@
 			</classes>
 		</connection>
 	</connections>
+	<events>
+		<event>
+			<id>1</id>
+			<name>Connected</name>
+			<description>Fires when the driver establishes a connection to the unit. Read the state variables here rather than waiting for Powered On or Input Changed: after a driver reload those fire only on a later transition, not for state that was already true. State variables read empty until this fires.</description>
+		</event>
+		<event>
+			<id>2</id>
+			<name>Disconnected</name>
+			<description>Fires when the driver's connection to the unit is lost.</description>
+		</event>
+		<event>
+			<id>3</id>
+			<name>Powered On</name>
+			<description>Fires when the unit's power state transitions from off to on. Not fired for a unit already on when the driver starts, so that a controller restart cannot trigger programming meant for a real power-on.</description>
+		</event>
+		<event>
+			<id>4</id>
+			<name>Powered Off</name>
+			<description>Fires when the unit's power state transitions from on to off.</description>
+		</event>
+		<event>
+			<id>5</id>
+			<name>Input Changed</name>
+			<description>Fires when the unit's selected input changes.</description>
+		</event>
+		<event>
+			<id>6</id>
+			<name>Surround Mode Changed</name>
+			<description>Fires when the unit's reported surround mode text changes.</description>
+		</event>
+	</events>
 </devicedata>

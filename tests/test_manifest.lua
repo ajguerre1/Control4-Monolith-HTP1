@@ -28,6 +28,33 @@ local function parseConnections(xml)
     return connections
 end
 
+-- Returns { [id] = name } for every <event>.
+local function parseEvents(xml)
+    local events = {}
+    for block in xml:gmatch("<event>(.-)</event>") do
+        local id = tonumber(block:match("<id>%s*(%d+)%s*</id>"))
+        local name = block:match("<name>%s*(.-)%s*</name>")
+        if id and name then events[id] = name end
+    end
+    return events
+end
+
+-- driver.lua's DRIVER.EVENTS table is assigned at file scope (not inside
+-- buildDriver), and none of its requires touch the C4 API at load time, so a
+-- bare dofile is enough to read it back -- no mock, no OnDriverInit needed.
+local function loadEventNames()
+    for _, name in ipairs({ "DRIVER", "OnDriverInit", "OnDriverLateInit", "OnDriverDestroyed",
+                             "OnPropertyChanged", "ExecuteCommand", "ReceivedFromProxy",
+                             "OnConnectionStatusChanged", "OnBindingChanged",
+                             "OnNetworkBindingChanged", "ReceivedFromNetwork" }) do
+        _G[name] = nil
+    end
+    dofile("driver.lua")
+    local names = {}
+    for _, name in pairs(DRIVER.EVENTS) do names[name] = true end
+    return names
+end
+
 return {
     {
         name = "the manifest declares the receiver proxy on binding 5001",
@@ -185,9 +212,83 @@ return {
             for _, name in ipairs({ "Driver Version", "System Software Version",
                                     "AV Controller Version", "Serial Number", "Model",
                                     "Connection Status", "Maximum Volume", "Volume Ramp Rate",
-                                    "Power Off Action", "Adopt Input Labels", "Debug Mode" }) do
+                                    "Power Off Action", "Debug Mode" }) do
                 H.isTrue(xml:find("<name>" .. name .. "</name>", 1, true) ~= nil,
                     "missing property: " .. name)
+            end
+        end,
+    },
+    {
+        name = "every event the Lua fires is declared in driver.xml, and vice versa",
+        fn = function()
+            -- A one-directional check would miss half of what can go wrong: a
+            -- typo'd event name in the Lua would be invisible to programming
+            -- (fires something nobody declared), and a declared-but-never-fired
+            -- event is a dead entry in the programming UI. Both directions, or
+            -- neither is proven.
+            local declared = {}
+            for _, name in pairs(parseEvents(readManifest())) do declared[name] = true end
+
+            local fired = loadEventNames()
+
+            for name in pairs(fired) do
+                H.isTrue(declared[name],
+                    "the Lua fires '" .. name .. "' but driver.xml does not declare it")
+            end
+            for name in pairs(declared) do
+                H.isTrue(fired[name],
+                    "driver.xml declares '" .. name .. "' but the Lua never fires it")
+            end
+        end,
+    },
+    {
+        name = "the six events are declared with unique, contiguous ids starting at 1",
+        fn = function()
+            local events = parseEvents(readManifest())
+            local count = 0
+            for _ in pairs(events) do count = count + 1 end
+            H.equal(count, 6, "expected exactly six declared events")
+            for id = 1, 6 do
+                H.isTrue(events[id] ~= nil, "no <event> declared with id " .. id)
+            end
+        end,
+    },
+    {
+        -- The driver cannot rename Control4's inputs (no DriverWorks call does
+        -- it), so promising to via a "Adopt Input Labels" Yes/No property was
+        -- withdrawn in favour of PRINT_INPUT_LABELS, which reports the unit's
+        -- labels instead of applying them.
+        name = "the Adopt Input Labels property is gone, and Print Input Labels replaces it",
+        fn = function()
+            local xml = readManifest()
+            H.isTrue(xml:find("Adopt Input Labels", 1, true) == nil,
+                "the property promised a rename this driver cannot perform")
+            H.isTrue(xml:find("ADOPT_INPUT_LABELS", 1, true) == nil,
+                "the retired command should not remain anywhere in the manifest")
+            H.isTrue(xml:find("Rename Inputs From Device Labels", 1, true) == nil,
+                "the retired action name should not remain anywhere in the manifest")
+            H.isTrue(xml:find("<name>Print Input Labels</name>", 1, true) ~= nil,
+                "the replacement action should be declared")
+            H.isTrue(xml:find("<command>PRINT_INPUT_LABELS</command>", 1, true) ~= nil,
+                "the replacement command should be declared")
+        end,
+    },
+    {
+        name = "no shipped Lua source references the retired ADOPT_INPUT_LABELS command",
+        fn = function()
+            -- The same file list tools/build-c4z.ps1 packages: driver code only,
+            -- not the test suite that is asserting the retirement.
+            local sources = {
+                "driver.lua", "htp1/frame.lua", "htp1/protocol.lua", "htp1/mapping.lua",
+                "htp1/state.lua", "htp1/transport.lua", "htp1/session.lua", "htp1/proxy.lua",
+                "htp1/log.lua", "module/json.lua",
+            }
+            for _, path in ipairs(sources) do
+                local handle = assert(io.open(path, "r"), path .. " should exist")
+                local text = handle:read("*a")
+                handle:close()
+                H.isTrue(text:find("ADOPT_INPUT_LABELS", 1, true) == nil,
+                    path .. " should not reference the retired command")
             end
         end,
     },

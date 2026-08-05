@@ -324,4 +324,140 @@ return {
             H.isTrue(changes.volume)
         end,
     },
+    {
+        name = "applying a modern document projects every status and video field",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.fields.surroundMode, "Native Dolby ATMOS")
+            H.equal(s.fields.decSourceProgram, "Dolby MAT/PCM")
+            H.equal(s.fields.decProgramFormat, "Object Audio")
+            H.equal(s.fields.decSampleRate, "48 kHz")
+            H.equal(s.fields.encListeningFormat, "5.1.2")
+            H.equal(s.fields.encSampleRate, "48 kHz")
+            H.equal(s.fields.diracState, "on")
+            H.equal(s.fields.videoResolution, "3840x2160p60Hz")
+            H.equal(s.fields.videoColorSpace, "BT2020")
+            H.equal(s.fields.videoHdr, "HDR10")
+        end,
+    },
+    {
+        name = "a targeted update on one status leaf updates only that field",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/status/DECSampleRate", value = "96 kHz" },
+            })
+            H.equal(s.fields.decSampleRate, "96 kHz")
+            H.equal(next(changes), "decSampleRate")
+            H.equal(s.fields.surroundMode, "Native Dolby ATMOS", "siblings are untouched")
+            H.equal(s.fields.encSampleRate, "48 kHz", "siblings are untouched")
+        end,
+    },
+    {
+        name = "a targeted update on one video leaf updates only that field",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/videostat/HDRstatus", value = "--" },
+            })
+            H.equal(s.fields.videoHdr, "--")
+            H.isTrue(changes.videoHdr)
+            H.equal(s.fields.videoResolution, "3840x2160p60Hz", "siblings are untouched")
+        end,
+    },
+    {
+        name = "a wholesale replace of /status re-derives everything beneath it",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/status", value = {
+                    SurroundMode = "Dolby Surround",
+                    DECSourceProgram = "PCM",
+                    DECProgramFormat = "2.0.0",
+                    DECSampleRate = "44.1 kHz",
+                    ENCListeningFormat = "5.2.2t",
+                    ENCSampleRate = "96 kHz",
+                    DiracState = "off",
+                    raw = { decoderSampleRateEnum = 5 },
+                } },
+            })
+            -- All seven, since the test claims "everything beneath it". The two
+            -- sample rates differ from the fixture on purpose: with the same
+            -- value they would pass whether or not they were re-derived.
+            local expected = {
+                surroundMode = "Dolby Surround", decSourceProgram = "PCM",
+                decProgramFormat = "2.0.0", decSampleRate = "44.1 kHz",
+                encListeningFormat = "5.2.2t", encSampleRate = "96 kHz",
+                diracState = "off",
+            }
+            for field, value in pairs(expected) do
+                H.equal(s.fields[field], value, field)
+                H.isTrue(changes[field], field .. " should be reported as changed")
+            end
+            H.equal(s.fields.raw, nil, "the raw sub-table is never projected")
+        end,
+    },
+    {
+        name = "a wholesale replace of /videostat re-derives everything beneath it",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/videostat", value = {
+                    VideoResolution = "-----",
+                    VideoColorSpace = "---",
+                    HDRstatus = "--",
+                } },
+            })
+            H.equal(s.fields.videoResolution, "-----", "the no-signal placeholder is reported as-is")
+            H.equal(s.fields.videoColorSpace, "---")
+            H.equal(s.fields.videoHdr, "--")
+            H.isTrue(changes.videoResolution and changes.videoColorSpace and changes.videoHdr)
+        end,
+    },
+    {
+        name = "operations under /status/raw are ignored and state.fields.raw never exists",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/status/raw/decoderSampleRateEnum", value = 9 },
+                { op = "replace", path = "/status/raw", value = { anything = true } },
+                { op = "add",     path = "/status/raw/newKey", value = "x" },
+            })
+            H.equal(next(changes), nil, "nothing tracked moved")
+            H.equal(s.fields.raw, nil)
+            H.equal(s.fields.surroundMode, "Native Dolby ATMOS", "tracked status fields untouched")
+        end,
+    },
+    {
+        name = "a document with no videostat at all leaves those fields nil without erroring",
+        fn = function()
+            local s = State.new()
+            local changes = s:applyDocument(F.legacy())
+            H.isTrue(s.loaded)
+            H.equal(s.fields.videoResolution, nil)
+            H.equal(s.fields.videoColorSpace, nil)
+            H.equal(s.fields.videoHdr, nil)
+            H.equal(changes.videoResolution, nil, "an absent container reports no change")
+            -- The legacy fixture still carries /status, so those fields do project.
+            H.equal(s.fields.diracState, "off")
+        end,
+    },
+    {
+        name = "a sparse document with neither status nor videostat is absence-tolerant",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.sparse())
+            H.isTrue(s.loaded)
+            H.equal(s.fields.surroundMode, nil)
+            H.equal(s.fields.diracState, nil)
+            H.equal(s.fields.videoResolution, nil)
+            H.equal(s.fields.raw, nil)
+        end,
+    },
 }
