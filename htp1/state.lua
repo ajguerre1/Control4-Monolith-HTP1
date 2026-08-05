@@ -120,4 +120,85 @@ function State:applyDocument(doc)
     return changes
 end
 
+-- Container paths whose replacement re-derives everything beneath them.
+local CONTAINER_PREFIXES = { "/cal", "/upmix", "/versions", "/inputs" }
+
+-- True when `path` is a tracked scalar, a tracked input sub-path, or a container
+-- holding either. Checked before any allocation, so the thousands of paths this
+-- driver ignores cost one string compare each.
+local function isInteresting(path)
+    if SCALAR_PATHS[path] then return "scalar" end
+    if path == "" or path == "/" then return "container" end
+    if path:match("^/inputs/[^/]+/label$") or path:match("^/inputs/[^/]+/visible$") then
+        return "input"
+    end
+    for _, prefix in ipairs(CONTAINER_PREFIXES) do
+        if path == prefix then return "container" end
+    end
+    return nil
+end
+State._isInteresting = isInteresting
+
+function State:_applyOne(operation, changes)
+    if type(operation) ~= "table" then return end
+
+    local kind = operation.op
+    local path = operation.path
+    if type(path) ~= "string" or type(kind) ~= "string" then return end
+
+    local interest = isInteresting(path)
+    if not interest then return end
+
+    local removing = (kind == "remove")
+    if not removing and operation.value == nil then
+        -- Skip rather than clear: this driver never needs a null-valued path,
+        -- and skipping avoids depending on how the JSON codec spells null.
+        return
+    end
+
+    if interest == "scalar" then
+        local field = SCALAR_PATHS[path]
+        if self:_assign(field, removing and nil or operation.value) then
+            changes[field] = true
+        end
+        return
+    end
+
+    if interest == "input" then
+        local key, leaf = path:match("^/inputs/([^/]+)/(%a+)$")
+        local entry = self.inputs[key]
+        if not entry then
+            entry = {}
+            self.inputs[key] = entry
+        end
+        local newValue = removing and nil or operation.value
+        if entry[leaf] ~= newValue then
+            entry[leaf] = newValue
+            changes.inputs = true
+        end
+        return
+    end
+
+    -- A container replacement.
+    local prefix = (path == "" or path == "/") and "" or path
+    self:_applyContainer(prefix, operation.value, changes)
+end
+
+-- Apply an `msoupdate` argument. Accepts an array of operations or, defensively,
+-- a single unwrapped one. Never raises: a malformed push must not break reading.
+function State:applyOps(ops)
+    local changes = {}
+    if type(ops) ~= "table" then return changes end
+
+    if ops.op ~= nil and ops.path ~= nil then
+        self:_applyOne(ops, changes)
+        return changes
+    end
+
+    for _, operation in ipairs(ops) do
+        self:_applyOne(operation, changes)
+    end
+    return changes
+end
+
 return State
