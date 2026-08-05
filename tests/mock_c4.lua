@@ -5,6 +5,7 @@ local M = {}
 
 M.calls, M.printed, M.sent, M.timers, M.now = {}, {}, {}, {}, 0
 M.properties, M.variables = {}, {}
+M.variableReadOnly = {}
 M.hashAlgorithms = { MD5 = true, SHA1 = true }
 -- What C4:GetBindingAddress(6001) answers. Invented, reserved-for-testing
 -- hostname (RFC 2606), never a real one. Tests that care about the "no
@@ -55,7 +56,7 @@ end
 
 function M.install(properties)
     M.calls, M.printed, M.sent, M.timers, M.now = {}, {}, {}, {}, 0
-    M.variables = {}
+    M.variables, M.variableReadOnly = {}, {}
     M.properties = properties or {}
     M.bindingAddress = "unit.invalid"
 
@@ -108,9 +109,10 @@ function M.install(properties)
             M.properties[name] = value
             record("UpdateProperty", { name, value })
         end,
-        AddVariable = function(_, name, value, kind)
+        AddVariable = function(_, name, value, kind, readOnly)
             M.variables[name] = value
-            record("AddVariable", { name, value, kind })
+            M.variableReadOnly[name] = readOnly
+            record("AddVariable", { name, value, kind, readOnly })
         end,
         SetVariable = function(_, name, value)
             M.variables[name] = value

@@ -69,7 +69,7 @@ local function pushUpdate(path, value)
 end
 
 local VARIABLE_NAMES = {
-    "CONNECTED", "POWER_STATE", "INPUT_ID", "INPUT_LABEL", "VOLUME_DB", "VOLUME_PERCENT",
+    "CONNECTED", "UNIT_POWER", "INPUT_ID", "INPUT_LABEL", "VOLUME_DB", "VOLUME_PERCENT",
     "MUTED", "SURROUND_MODE", "INPUT_FORMAT", "INPUT_PROGRAM", "INPUT_SAMPLE_RATE",
     "OUTPUT_FORMAT", "OUTPUT_SAMPLE_RATE", "VIDEO_RESOLUTION", "VIDEO_COLORSPACE",
     "VIDEO_HDR", "DIRAC_STATE",
@@ -327,11 +327,30 @@ return {
             loadDriver()
             local created = {}
             for _, c in ipairs(callsNamed("AddVariable")) do created[c.args[1]] = c.args[3] end
+            local expected = {}
             for _, name in ipairs(VARIABLE_NAMES) do
+                expected[name] = true
                 H.isTrue(mock.variables[name] ~= nil, name .. " should have been created")
                 H.equal(created[name], "STRING", name .. " should be created as a STRING")
+                -- An external write would desynchronise the driver's cache: it
+                -- would still hold the driver's last value, so nothing would be
+                -- rewritten until the computed value moved, and the variable
+                -- could read wrong indefinitely.
+                H.equal(mock.variableReadOnly[name], true, name .. " should be read-only")
             end
             H.equal(#VARIABLE_NAMES, 17, "the brief calls for seventeen variables")
+
+            -- The reverse direction: an eighteenth variable added to driver.lua
+            -- would otherwise ship with nothing asserting it exists at all.
+            for name in pairs(mock.variables) do
+                H.isTrue(expected[name],
+                    name .. " was created but is not in the expected list")
+            end
+
+            -- POWER_STATE is a variable the receiver proxy owns on this same
+            -- device. Creating one of our own would put two writers on one name.
+            H.equal(mock.variables.POWER_STATE, nil,
+                "POWER_STATE belongs to the proxy; ours is UNIT_POWER")
             H.assertNoErrorLog()
         end,
     },
@@ -343,7 +362,7 @@ return {
             -- vpl -50, vph 0, volume -25: (-25 - -50) / (0 - -50) * 100 = 50.
             local expected = {
                 CONNECTED = "true",
-                POWER_STATE = "On",
+                UNIT_POWER = "On",
                 INPUT_ID = "h1",
                 INPUT_LABEL = "Streamer",
                 VOLUME_DB = "-25",
@@ -452,7 +471,7 @@ return {
             -- fixture and reads "Off", while muted is simply absent and reads
             -- empty. Reporting an absent field as "false" would be a
             -- determinate answer to a question nothing has answered yet.
-            H.equal(mock.variables.POWER_STATE, "Off", "F.sparse() reports powerIsOn = false")
+            H.equal(mock.variables.UNIT_POWER, "Off", "F.sparse() reports powerIsOn = false")
             H.equal(mock.variables.MUTED, "", "muted is absent, so unknown rather than false")
             H.assertNoErrorLog()
         end,
@@ -516,14 +535,14 @@ return {
             local firedOff = callsNamed("FireEvent")
             H.count(firedOff, 1)
             H.equal(firedOff[1].args[1], "Powered Off")
-            H.equal(mock.variables.POWER_STATE, "Off")
+            H.equal(mock.variables.UNIT_POWER, "Off")
 
             mock.clearCalls()
             pushUpdate("/powerIsOn", true)
             local firedOn = callsNamed("FireEvent")
             H.count(firedOn, 1)
             H.equal(firedOn[1].args[1], "Powered On")
-            H.equal(mock.variables.POWER_STATE, "On")
+            H.equal(mock.variables.UNIT_POWER, "On")
             H.assertNoErrorLog()
         end,
     },

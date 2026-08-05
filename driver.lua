@@ -56,6 +56,14 @@ end
 -- The unit's own label beats nothing; the Control4 connection name beats an
 -- empty field. Task M2-T3 (input labels) reads Mapping.INPUTS for the same
 -- reason -- extend this lookup rather than forking it.
+-- An input the unit named but never described. A targeted /inputs/<key>/label
+-- push for a key absent from the last document creates an entry with a label
+-- and no visibility, and printing the literal "nil" there would read as a value.
+local function visibleText(value)
+    if value == nil then return "unknown" end
+    return tostring(value)
+end
+
 local function inputLabelText(state)
     local key = state.fields.input
     if key == nil then return "" end
@@ -70,7 +78,13 @@ end
 local VARIABLES = {
     -- Always determinate: the driver always knows whether it has a session.
     CONNECTED          = function(_, connected) return connected and "true" or "false" end,
-    POWER_STATE        = function(state)
+    -- UNIT_POWER, not POWER_STATE. The receiver proxy owns a variable called
+    -- POWER_STATE on this same device, and it is the one proxy variable with no
+    -- output index -- a bare name we would be writing over. The driver also
+    -- drives the proxy's copy, sending ON/OFF on every power change, so both
+    -- would write one name in different encodings and whichever wrote last
+    -- would win. Programming that read it would work until it silently didn't.
+    UNIT_POWER         = function(state)
         if state.fields.power == nil then return "" end
         return state.fields.power and "On" or "Off"
     end,
@@ -115,7 +129,23 @@ local function initVariables()
     for name, fn in pairs(VARIABLES) do
         local value = fn(DRIVER.state, connected)
         DRIVER.varCache[name] = value
-        C4:AddVariable(name, value, "STRING")
+        -- Read-only, and isolated. Read-only because an external write would
+        -- desynchronise varCache: the cache would still hold our last value, so
+        -- we would not rewrite until the computed value moved, and the variable
+        -- could read wrong indefinitely.
+        --
+        -- Isolated because this loop runs under pairs(), whose order is
+        -- unspecified: one failure without a pcall would abort it partway and
+        -- leave an arbitrary, reload-varying subset of the seventeen created,
+        -- while varCache claimed all of them existed. It would also skip the
+        -- Driver Version update below, so a successful install would still
+        -- report the old version in Composer.
+        local ok, err = pcall(function()
+            C4:AddVariable(name, value, "STRING", true)
+        end)
+        if not ok then
+            DRIVER.log:error("could not create variable " .. name .. ": " .. tostring(err))
+        end
     end
 end
 
@@ -276,9 +306,17 @@ function DRIVER.onConnected(connected)
 end
 
 function DRIVER.onChanges(changes)
-    updateVariables(DRIVER.session.connected)
-    fireStateEvents(changes)
+    -- The proxy first, and deliberately. This is the call M1 depends on for
+    -- volume, mute and input feedback in Navigator, and it is already proven on
+    -- hardware. The variables and events are new: a fault in them must not be
+    -- able to starve the thing that already works, so they run after and behind
+    -- their own guard.
     DRIVER.proxy:notify(changes)
+
+    guard("variables", function()
+        updateVariables(DRIVER.session.connected)
+        fireStateEvents(changes)
+    end)
 end
 
 function OnDriverInit()
@@ -351,7 +389,7 @@ local ACTIONS = {
                 print(string.format(
                     "  connection %d (%s): key=%s label=%s visible=%s",
                     mapped.binding, mapped.name, mapped.key,
-                    tostring(entry.label or ""), tostring(entry.visible)))
+                    tostring(entry.label or ""), visibleText(entry.visible)))
             end
         end
 
@@ -365,7 +403,7 @@ local ACTIONS = {
             local entry = inputs[key]
             print(string.format(
                 "  no Control4 connection: key=%s label=%s visible=%s",
-                key, tostring(entry.label or ""), tostring(entry.visible)))
+                key, tostring(entry.label or ""), visibleText(entry.visible)))
         end
     end,
 }
