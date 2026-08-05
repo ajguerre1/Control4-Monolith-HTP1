@@ -38,6 +38,16 @@ return {
         end,
     },
     {
+        name = "a non-positive timer interval is refused rather than hanging the suite",
+        fn = function()
+            mock.install({})
+            H.errorMatches(function() C4:SetTimer(0, function() end, true) end,
+                "positive interval")
+            H.errorMatches(function() C4:SetTimer(-5, function() end, false) end,
+                "positive interval")
+        end,
+    },
+    {
         name = "SendToProxy rejects an explicit nil call type",
         fn = function()
             mock.install({})

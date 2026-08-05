@@ -74,6 +74,11 @@ function M.install(properties)
             table.insert(M.sent, data)
         end,
         SetTimer = function(_, ms, callback, repeating)
+            -- A non-positive interval makes M.advance loop forever, which hangs
+            -- the suite silently. Fail at the call site, where the culprit is named.
+            if type(ms) ~= "number" or ms <= 0 then
+                error("SetTimer requires a positive interval, got " .. tostring(ms), 2)
+            end
             nextTimerId = nextTimerId + 1
             local id = nextTimerId
             local handle
