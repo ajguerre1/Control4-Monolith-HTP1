@@ -130,11 +130,25 @@
 				<default></default>
 				<readonly>false</readonly>
 			</property>
+			<!-- Also runtime-populated: the macros this unit actually stores,
+			     under the names its owner gave them. Slots with nothing stored
+			     in them are left out. Selecting one only selects it; the Run
+			     Selected Macro action below is what runs it. -->
+			<property>
+				<name>Macro</name>
+				<type>DYNAMIC_LIST</type>
+				<default></default>
+				<readonly>false</readonly>
+			</property>
 		</properties>
 		<actions>
 			<action>
 				<name>Refresh From Device</name>
 				<command>REFRESH_FROM_DEVICE</command>
+			</action>
+			<action>
+				<name>Run Selected Macro</name>
+				<command>RUN_SELECTED_MACRO</command>
 			</action>
 			<action>
 				<name>Print Input Labels</name>
@@ -230,6 +244,21 @@
 						<type>RANGED_INTEGER</type>
 						<minimum>0</minimum>
 						<maximum>5</maximum>
+					</param>
+				</params>
+			</command>
+			<!-- A STRING, not a LIST: the macros are the unit's own, so any
+			     fixed list declared here could only be wrong. Accepts the name
+			     the owner gave the macro or its slot key (cmda, preset1,
+			     cmdcustom3). The driver replays what the unit stores; it cannot
+			     create or edit a macro. -->
+			<command>
+				<name>Run Macro</name>
+				<description>Run NAME's stored macro PARAM1.</description>
+				<params>
+					<param>
+						<name>Macro</name>
+						<type>STRING</type>
 					</param>
 				</params>
 			</command>

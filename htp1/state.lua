@@ -59,6 +59,28 @@ local NORMALISE = {
     serial              = function(value) return tostring(value) end,
 }
 
+-- The unit stores macros in these fixed slots and no others: four command
+-- buttons, four presets, sixteen custom entries. Each slot lives at
+-- /svronly/<slot> and holds an ARRAY OF JSON-PATCH OPERATIONS -- there is no
+-- "run macro" verb on this unit, so running one means replaying what is stored
+-- here. The human-readable names live apart, in a map at /svronly/macroNames
+-- keyed by these same slot names.
+--
+-- Declared as an array, not derived from pairs(), because this is also the
+-- order Composer's macro picker shows: pairs() order is undefined in Lua, so a
+-- list built from it would reshuffle between driver loads.
+local MACRO_SLOTS = { "cmda", "cmdb", "cmdc", "cmdd",
+                      "preset1", "preset2", "preset3", "preset4" }
+for i = 1, 16 do table.insert(MACRO_SLOTS, "cmdcustom" .. i) end
+State.MACRO_SLOTS = MACRO_SLOTS
+
+-- Keys outside this set are ignored wherever macros are read. /svronly is the
+-- unit's own scratch container and holds more than macros, so an unknown key
+-- there is not a macro; and a key with no row here has no defined position in
+-- the picker above.
+local MACRO_SLOT_SET = {}
+for _, slot in ipairs(MACRO_SLOTS) do MACRO_SLOT_SET[slot] = true end
+
 local function resolve(container, pointer)
     local node = container
     for segment in pointer:gmatch("/([^/]+)") do
@@ -69,7 +91,9 @@ local function resolve(container, pointer)
 end
 
 function State.new()
-    return setmetatable({ loaded = false, fields = {}, inputs = {}, diracSlots = {} }, State)
+    return setmetatable({
+        loaded = false, fields = {}, inputs = {}, diracSlots = {}, macros = {},
+    }, State)
 end
 
 function State:inputLabel(key)
@@ -143,6 +167,80 @@ function State:_setDiracSlots(slots)
     return changed
 end
 
+-- A stored entry counts as an operation only when it carries what replaying it
+-- needs: a kind, a path to apply it to, and a value to apply. Anything else in
+-- the array -- a bare string, a half-written entry, a `remove` with no value --
+-- is dropped here rather than forwarded to the unit, because a driver that
+-- blindly relays whatever it finds in a stored blob is one malformed macro away
+-- from sending nonsense to a live processor.
+--
+-- Filtering on INGEST rather than at replay time is deliberate: it makes "this
+-- slot has operations" mean "this slot has operations this driver can replay",
+-- which is the question the picker asks when deciding whether to list a slot at
+-- all.
+local function replayableOps(list)
+    local ops = {}
+    if type(list) ~= "table" then return ops end
+    for _, entry in ipairs(list) do
+        if type(entry) == "table" and type(entry.op) == "string"
+            and type(entry.path) == "string" and entry.value ~= nil then
+            table.insert(ops, { op = entry.op, path = entry.path, value = entry.value })
+        end
+    end
+    return ops
+end
+
+function State:_macroEntry(slot)
+    local entry = self.macros[slot]
+    if not entry then
+        entry = { ops = {} }
+        self.macros[slot] = entry
+    end
+    return entry
+end
+
+-- Returns true when what a MACRO PICKER would show has changed -- which is to
+-- say, when the slot gained or lost its operations. The picker lists names, not
+-- operations, so an owner editing a macro that stays non-empty stores its new
+-- operations without asking anything to redraw.
+function State:_setMacroOps(slot, list)
+    local entry = self:_macroEntry(slot)
+    local had = #entry.ops > 0
+    entry.ops = replayableOps(list)
+    return had ~= (#entry.ops > 0)
+end
+
+-- Names are SITE DATA: whatever the owner typed on the unit. The driver passes
+-- them through and never invents one.
+function State:_setMacroNames(names)
+    if type(names) ~= "table" then return false end
+    local changed = false
+    for slot, name in pairs(names) do
+        if MACRO_SLOT_SET[slot] and type(name) == "string" then
+            local entry = self:_macroEntry(slot)
+            if entry.name ~= name then
+                entry.name = name
+                changed = true
+            end
+        end
+    end
+    return changed
+end
+
+-- A slot the container does not mention is left alone, not emptied -- the same
+-- "absent is UNSPECIFIED, not cleared" rule _setInputs follows above. A partial
+-- /svronly push would otherwise wipe every macro it happened not to carry.
+function State:_setMacros(svronly)
+    if type(svronly) ~= "table" then return false end
+    local changed = self:_setMacroNames(svronly.macroNames)
+    for _, slot in ipairs(MACRO_SLOTS) do
+        if svronly[slot] ~= nil and self:_setMacroOps(slot, svronly[slot]) then
+            changed = true
+        end
+    end
+    return changed
+end
+
 -- Re-derive every tracked path that lives under `prefix` from `value`.
 -- `prefix` of "" means the whole document.
 function State:_applyContainer(prefix, value, changes)
@@ -186,6 +284,14 @@ function State:_applyContainer(prefix, value, changes)
     end
     if slots and self:_setDiracSlots(slots) then changes.diracSlots = true end
 
+    local svronly
+    if prefix == "" then
+        svronly = value.svronly
+    elseif prefix == "/svronly" then
+        svronly = value
+    end
+    if svronly and self:_setMacros(svronly) then changes.macros = true end
+
     return changes
 end
 
@@ -208,18 +314,32 @@ end
 -- path equals "/status" exactly, so a targeted push there is dropped before
 -- any allocation. Tracking it wildcard-style would undo the entire reason
 -- this driver projects rather than mirrors the ~38 KB document.
+--
+-- `/svronly` is the unit's own scratch container. It holds the macro slots and
+-- their names, and other things this driver does not read; a wholesale replace
+-- of it re-derives the macros and ignores the rest.
 local CONTAINER_PREFIXES = { "/cal", "/cal/slots", "/upmix", "/versions", "/inputs",
-                             "/status", "/videostat" }
+                             "/status", "/videostat", "/svronly" }
 
--- True when `path` is a tracked scalar, a tracked input sub-path, or a container
--- holding either. Checked before any allocation, so the thousands of paths this
--- driver ignores cost a hash lookup, at most two anchored matches and a few
--- equality tests -- no allocation, so a busy device stays cheap.
+-- True when `path` is a tracked scalar, a tracked input sub-path, a macro slot
+-- or name, or a container holding any of them. Checked before any allocation,
+-- so the thousands of paths this driver ignores cost a few hash lookups, at
+-- most two anchored matches and a handful of equality tests -- no allocation,
+-- so a busy device stays cheap.
 local function isInteresting(path)
     if SCALAR_PATHS[path] then return "scalar" end
     if path == "" or path == "/" then return "container" end
     if path:match("^/inputs/[^/]+/label$") or path:match("^/inputs/[^/]+/visible$") then
         return "input"
+    end
+    -- Gated on a substring compare so the thousands of paths that are not
+    -- macros pay one comparison, not three anchored matches.
+    if path:sub(1, 9) == "/svronly/" then
+        local rest = path:sub(10)
+        if rest == "macroNames" then return "macroNames" end
+        local named = rest:match("^macroNames/([^/]+)$")
+        if named then return MACRO_SLOT_SET[named] and "macroName" or nil end
+        return MACRO_SLOT_SET[rest] and "macroOps" or nil
     end
     for _, prefix in ipairs(CONTAINER_PREFIXES) do
         if path == prefix then return "container" end
@@ -264,6 +384,36 @@ function State:_applyOne(operation, changes)
         if entry[leaf] ~= newValue then
             entry[leaf] = newValue
             changes.inputs = true
+        end
+        return
+    end
+
+    -- The three macro granularities the unit's own client patches at: one
+    -- slot's operations, the whole name map, one name. Accepting all three is
+    -- permissive INBOUND parsing, the same call made for /cal/slots above --
+    -- and here it is what keeps a macro renamed or rewritten on the unit from
+    -- going stale in Composer until the next reconnect, since this driver never
+    -- polls for a fresh document.
+    if interest == "macroOps" then
+        if self:_setMacroOps(path:sub(10), removing and {} or operation.value) then
+            changes.macros = true
+        end
+        return
+    end
+
+    if interest == "macroNames" then
+        if self:_setMacroNames(operation.value) then changes.macros = true end
+        return
+    end
+
+    if interest == "macroName" then
+        local slot = path:match("([^/]+)$")
+        local newName = removing and nil or operation.value
+        if newName ~= nil and type(newName) ~= "string" then return end
+        local entry = self:_macroEntry(slot)
+        if entry.name ~= newName then
+            entry.name = newName
+            changes.macros = true
         end
         return
     end

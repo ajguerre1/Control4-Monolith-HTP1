@@ -26,6 +26,60 @@ local function statusRaw()
     }
 end
 
+-- The unit's stored macros. Every slot holds an array of JSON-patch operations
+-- and the names live apart, in a map keyed by the same slot names.
+--
+-- MACRO NAMES ARE SITE DATA on a real unit -- whatever the owner typed. Every
+-- name here is invented and deliberately neutral. The slots cover the cases the
+-- picker and the replay have to get right:
+--
+--   cmda        two operations on two different paths -- both must be sent
+--   cmdb        two operations on ONE path -- only the later value may be sent
+--   cmdc        named but empty -- must not appear in the list at all
+--   cmdd        one good operation among entries that are not operations
+--   cmdcustom1  operations but no name -- falls back to the slot key
+--
+-- preset2..4 and cmdcustom2..16 are simply absent, as they are on a unit whose
+-- owner never used them.
+local function macros()
+    return {
+        macroNames = {
+            cmda = "Movie Night",
+            cmdb = "Listening",
+            cmdc = "Late Night",
+            preset1 = "Preset 1",
+        },
+        -- Every value here differs from what the fixture's own document
+        -- reports, so a test asserting an operation was sent cannot pass by
+        -- accident on a value that was already in place.
+        cmda = {
+            { op = "replace", path = "/volume", value = -22 },
+            { op = "replace", path = "/dialogEnh", value = 5 },
+        },
+        cmdb = {
+            { op = "replace", path = "/volume", value = -40 },
+            { op = "replace", path = "/volume", value = -30 },
+        },
+        cmdc = {},
+        cmdd = {
+            "not an operation at all",
+            { path = "/night", value = "on" },              -- no op
+            { op = "replace", value = "on" },                -- no path
+            { op = "replace", path = "/night", value = "auto" },
+            { op = "remove", path = "/loudness" },           -- nothing to replay
+        },
+        preset1 = {
+            { op = "replace", path = "/upmix/select", value = "auro" },
+        },
+        cmdcustom1 = {
+            { op = "replace", path = "/muted", value = true },
+        },
+        -- /svronly holds more than macros on a real unit; this proves an
+        -- unknown key there is ignored rather than mistaken for a slot.
+        lastUsedPage = "settings",
+    }
+end
+
 -- Firmware 2.x shape: has channeltrim, dialnorm, shaker, secondaryVolume.
 function F.modern()
     return {
@@ -56,6 +110,7 @@ function F.modern()
             },
         },
         inputs = baseInputs(),
+        svronly = macros(),
         -- swVer is the release the unit calls itself; avController is an internal
         -- component on its own numbering. Both are reported, and they never match.
         versions = { avController = "5.96 Built Jul  8 2026, 11:45:00\n", swVer = "V2.1.1",
@@ -85,6 +140,8 @@ end
 --
 -- Also the fixture that proves absence tolerance for the video fields: this
 -- unit reports `status` but, on this firmware, no `videostat` block at all.
+-- It carries no `svronly` block either, so it doubles as the "a document that
+-- says nothing about macros leaves the macro picker alone" case.
 function F.legacy()
     return {
         volume = -29,

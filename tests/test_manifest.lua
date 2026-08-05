@@ -301,26 +301,42 @@ return {
             for _, name in ipairs({ "Driver Version", "System Software Version",
                                     "AV Controller Version", "Serial Number", "Model",
                                     "Connection Status", "Maximum Volume", "Volume Ramp Rate",
-                                    "Power Off Action", "Debug Mode", "Dirac Filter" }) do
+                                    "Power Off Action", "Debug Mode", "Dirac Filter",
+                                    "Macro" }) do
                 H.isTrue(xml:find("<name>" .. name .. "</name>", 1, true) ~= nil,
                     "missing property: " .. name)
             end
         end,
     },
     {
-        name = "the Dirac Filter property is a DYNAMIC_LIST with no fixed items",
+        name = "the runtime-populated pickers are DYNAMIC_LISTs with no fixed items",
         fn = function()
-            -- Populated at runtime from the unit's own slot names via
-            -- C4:UpdatePropertyList, not from a list declared here.
+            -- Both are populated at runtime via C4:UpdatePropertyList, from
+            -- what the unit itself reports -- its Dirac slot names and its
+            -- stored macros -- never from a list declared here.
             local xml = readManifest()
-            local block = xml:match("<property>%s*<name>Dirac Filter</name>(.-)</property>")
-            H.isTrue(block ~= nil, "the Dirac Filter property should be declared")
-            H.isTrue(block:find("<type>DYNAMIC_LIST</type>", 1, true) ~= nil,
-                "Dirac Filter should be a DYNAMIC_LIST")
-            H.isTrue(block:find("<readonly>false</readonly>", 1, true) ~= nil,
-                "Dirac Filter should be settable")
-            H.isTrue(block:find("<items>", 1, true) == nil,
-                "a DYNAMIC_LIST declares no fixed <items>")
+            for _, name in ipairs({ "Dirac Filter", "Macro" }) do
+                local block = xml:match("<property>%s*<name>" .. name .. "</name>(.-)</property>")
+                H.isTrue(block ~= nil, "the " .. name .. " property should be declared")
+                H.isTrue(block:find("<type>DYNAMIC_LIST</type>", 1, true) ~= nil,
+                    name .. " should be a DYNAMIC_LIST")
+                H.isTrue(block:find("<readonly>false</readonly>", 1, true) ~= nil,
+                    name .. " should be settable")
+                H.isTrue(block:find("<items>", 1, true) == nil,
+                    "a DYNAMIC_LIST declares no fixed <items>: " .. name)
+            end
+        end,
+    },
+    {
+        name = "the Run Selected Macro action is declared with the command the Lua dispatches on",
+        fn = function()
+            -- Composer's Actions tab sends the literal "LUA_ACTION" with this
+            -- <command> in tParams.ACTION; a mismatch is a silent no-op.
+            local xml = readManifest()
+            H.isTrue(xml:find("<name>Run Selected Macro</name>", 1, true) ~= nil,
+                "the action should be declared")
+            H.isTrue(xml:find("<command>RUN_SELECTED_MACRO</command>", 1, true) ~= nil,
+                "with the dispatch token driver.lua's ACTIONS table keys on")
         end,
     },
     {
@@ -389,14 +405,14 @@ return {
         end,
     },
     {
-        name = "the seven processing commands are declared with the right names and param shapes",
+        name = "the eight processing commands are declared with the right names and param shapes",
         fn = function()
             local xml = readManifest()
             local names = parseCommands(xml)
             local expected = { "Set Dirac", "Set Night Mode", "Set Dialog Enhance",
                                 "Set Bass Enhance", "Toggle Bass Enhance", "Set Lip Sync Delay",
-                                "Set Dirac Slot" }
-            H.equal(#names, #expected, "expected exactly the seven declared commands")
+                                "Set Dirac Slot", "Run Macro" }
+            H.equal(#names, #expected, "expected exactly the eight declared commands")
             for _, name in ipairs(expected) do
                 local found = false
                 for _, actual in ipairs(names) do if actual == name then found = true end end
@@ -459,6 +475,13 @@ return {
             H.isTrue(diracSlotBlock:find("<type>RANGED_INTEGER</type>", 1, true) ~= nil)
             H.isTrue(diracSlotBlock:find("<minimum>0</minimum>", 1, true) ~= nil)
             H.isTrue(diracSlotBlock:find("<maximum>5</maximum>", 1, true) ~= nil)
+
+            -- A STRING, not a LIST: the macros belong to the unit, so any fixed
+            -- list declared in the manifest could only be wrong.
+            local runMacroBlock = assert(commandBlock("Run Macro"))
+            H.isTrue(runMacroBlock:find("<name>Macro</name>", 1, true) ~= nil)
+            H.isTrue(runMacroBlock:find("<type>STRING</type>", 1, true) ~= nil)
+            H.equal(#listItems(runMacroBlock), 0, "no fixed list of macro names")
         end,
     },
     {

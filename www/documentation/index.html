@@ -72,9 +72,10 @@
   <li>Loudness on, off and toggle, from the room's own control</li>
   <li>Dirac, night mode, dialog and bass enhancement, lip sync</li>
   <li>Dirac filter slot selection, by the unit's own slot names</li>
+  <li>Running the macros the unit already stores, by the owner's own names</li>
   <li>Listening mode across all seven upmixers</li>
   <li>Programming commands for Dirac Live, night mode, dialog and bass enhancement, lip sync
-      delay, and the Dirac filter slot</li>
+      delay, the Dirac filter slot, and the unit's stored macros</li>
   <li>Read-only status: formats, sample rates, video</li>
   <li>Driver events for programming</li>
   <li>Unattended reconnection</li>
@@ -165,7 +166,26 @@
         <code>2 - Slot 2</code> rather than being left out. The list and the current selection
         update on their own whenever the unit reports a change, from any source.</td>
   </tr>
+  <tr>
+    <td class="name">Macro</td>
+    <td>The macros this unit stores, under the names its owner gave them</td>
+    <td>Chooses which stored macro the <strong>Run Selected Macro</strong> action runs. Only slots
+        that actually hold something appear — a macro slot the owner named but never filled is left
+        out, because selecting it could only do nothing. A macro the owner never named appears under
+        its slot key, e.g. <code>cmdcustom3</code>. Choosing an entry only selects it; nothing is sent
+        to the unit until you run it. The list refreshes on its own when a macro is stored, renamed or
+        emptied on the unit.</td>
+  </tr>
 </table>
+<div class="note">
+  <strong>The driver replays macros; it cannot write them.</strong>
+  A macro on this unit is a list of settings changes saved in one of its fixed slots
+  (<code>cmda</code>&ndash;<code>cmdd</code>, <code>preset1</code>&ndash;<code>preset4</code>,
+  <code>cmdcustom1</code>&ndash;<code>cmdcustom16</code>), and running one means sending those same
+  changes back — which is exactly what the unit's own web interface does. Creating, editing, renaming
+  and deleting macros belong to the unit's own UI, and this driver deliberately offers none of them.
+  Whatever is in a slot is the owner's own stored intent, so the driver sends it as it stands.
+</div>
 
 <h2>Actions</h2>
 <p>Composer's <strong>Actions</strong> tab. Output appears in the <strong>Lua</strong> tab with this
@@ -179,6 +199,10 @@
       <td>Lists every input the unit reported: the Control4 connection, the unit's own label for it,
           and whether the unit considers it visible. Inputs Control4 cannot select are listed too and
           marked as such. Use it to decide what to rename your connections to.</td></tr>
+  <tr><td class="name">Run Selected Macro</td>
+      <td>Runs the macro chosen in the <strong>Macro</strong> property above, by sending the settings
+          it stores. Use it to try a macro from Composer before wiring it into programming. If the
+          slot turns out to be empty, nothing is sent and the Lua tab says so.</td></tr>
   <tr><td class="name">Print Driver State</td>
       <td>Dumps the driver's current view of the unit. Useful when reporting a problem.</td></tr>
 </table>
@@ -214,7 +238,20 @@
       <td>Selects the active Dirac filter slot by number, for programming that knows the slot it
           wants rather than its name. The <strong>Dirac Filter</strong> property above is the way to
           choose one by name from Composer.</td></tr>
+  <tr><td class="name">Run Macro</td><td class="mono">Macro: text</td>
+      <td>Runs one of the unit's stored macros, sending the settings it holds. Type either the name
+          the owner gave the macro on the unit (<em>Movie Night</em>) or its slot key
+          (<code>cmda</code>, <code>preset1</code>, <code>cmdcustom3</code>). The slot key is the
+          durable choice: renaming the macro on the unit does not break programming written against
+          it.</td></tr>
 </table>
+<div class="note">
+  <strong>An empty or unknown macro does nothing at all.</strong>
+  A name that matches no macro, or a slot with nothing stored in it, earns a line on the Lua tab
+  (with Debug Mode on) and no message to the unit — never a half-run macro, and never an empty one
+  the unit would reject. The macro list in the <strong>Macro</strong> property is the reliable way to
+  see what a name has to match.
+</div>
 <div class="note">
   <strong>An out-of-range or unrecognised value is refused, not passed through.</strong>
   A Level outside 0&ndash;6, a Delay outside 0&ndash;340, or a Mode the unit does not have earns a log

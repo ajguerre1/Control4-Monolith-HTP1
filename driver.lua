@@ -264,6 +264,112 @@ local function updateDiracFilterProperty()
 end
 
 --------------------------------------------------------------------------------
+-- Macros
+--------------------------------------------------------------------------------
+
+-- The unit stores macros in fixed slots and this driver only ever REPLAYS them.
+-- There is no "run macro" verb on the wire: a macro is an array of JSON-patch
+-- operations the owner saved on the unit, and running one means sending those
+-- operations back as a changemso -- exactly what the unit's own web client
+-- does. Nothing here can create, edit, rename or delete a macro; the unit's own
+-- UI owns all of that.
+
+-- What one slot reads as in Composer's list: the unit's own name for it,
+-- falling back to the slot key when the owner never named it.
+--
+-- Commas are replaced because C4:UpdatePropertyList takes the whole list as one
+-- COMMA-SEPARATED STRING -- a macro whose name contains a comma would otherwise
+-- arrive in Composer as two entries, neither of them selectable. The
+-- substitution is display-only: runMacro still accepts the unit's real name,
+-- commas and all.
+local function macroEntryText(slot, name)
+    if name == nil or name == "" then return slot end
+    return (name:gsub(",", " "))
+end
+
+-- Only slots that actually hold operations. A slot the owner named but left
+-- empty is deliberately absent: it would look like a control and do nothing.
+local function macroItems()
+    local items = {}
+    for _, slot in ipairs(State.MACRO_SLOTS) do
+        local entry = DRIVER.state.macros[slot]
+        if entry and #entry.ops > 0 then
+            table.insert(items, macroEntryText(slot, entry.name))
+        end
+    end
+    return items
+end
+
+-- Repopulates the whole list, like the Dirac picker above. The current
+-- selection is KEPT where it still exists, so a rename on the unit -- or a new
+-- macro appearing -- does not silently move the selection out from under the
+-- Run Selected Macro action. Where the old selection is gone, or there never
+-- was one, the first entry is chosen so the action always has something
+-- determinate to run.
+--
+-- No feedback loop to guard against here, unlike the Dirac picker: selecting a
+-- macro selects it and nothing more. Running one is an explicit action, so
+-- Composer echoing this call back as a property change cannot reach the unit.
+local function updateMacroProperty()
+    local items = macroItems()
+    if #items == 0 then return end -- no macros stored; leave the property alone
+    local selected = Properties["Macro"]
+    local kept
+    for _, item in ipairs(items) do
+        if item == selected then kept = item end
+    end
+    C4:UpdatePropertyList("Macro", table.concat(items, ","), kept or items[1])
+end
+
+-- Accepts the unit's own name for a macro, the text shown in the list, or the
+-- slot key. A programmer typing a name is the likely case; a slot key is the
+-- unambiguous one, so it wins where the two could collide. Two macros sharing
+-- one name resolve to the earlier slot -- arbitrary, but deterministic.
+local function resolveMacroSlot(request)
+    if type(request) ~= "string" or request == "" then return nil end
+    local byKey, byName, byText
+    for _, slot in ipairs(State.MACRO_SLOTS) do
+        local entry = DRIVER.state.macros[slot]
+        if entry then
+            if not byKey and slot == request then byKey = slot end
+            if not byName and entry.name == request then byName = slot end
+            if not byText and macroEntryText(slot, entry.name) == request then byText = slot end
+        end
+    end
+    return byKey or byName or byText
+end
+
+-- REPLAYS THE OWNER'S OWN STORED INTENT, and that is worth saying out loud:
+-- this is the one place the driver sends paths it did not choose. A macro can
+-- touch anything the unit's own web client can, and second-guessing which of
+-- those paths are allowed would break the owner's own macro for no benefit --
+-- the unit remains the authority on what it will accept. What the driver will
+-- not do is forward an entry that is not an operation (htp1/state.lua drops
+-- those on the way in) or send an empty changemso, which this codec would
+-- encode as {} rather than [] and the unit would reject outright.
+--
+-- Session:write is the right tool, and no batch call is needed: writes queue by
+-- path and flush together 50 ms later, so every path a macro touches goes out
+-- in ONE changemso, and a macro touching one path twice sends only the later
+-- value -- sending both would be a write the second immediately overwrites.
+local function runMacro(request, label)
+    local slot = resolveMacroSlot(request)
+    if not slot then
+        DRIVER.log:debug(label .. ": no macro named", tostring(request))
+        return
+    end
+    local ops = DRIVER.state.macros[slot].ops
+    if #ops == 0 then
+        DRIVER.log:debug(label .. ": macro", slot, "has no stored operations to replay")
+        return
+    end
+    DRIVER.log:debug(label .. ": replaying", #ops, "stored operation(s) from", slot)
+    for _, op in ipairs(ops) do
+        DRIVER.session:write(op.path, op.value)
+    end
+end
+
+--------------------------------------------------------------------------------
 -- Error handling
 --------------------------------------------------------------------------------
 
@@ -388,6 +494,12 @@ function DRIVER.onChanges(changes)
             updateDiracFilterProperty()
         end
     end)
+
+    -- Its own guard again, and not folded into the block above: two independent
+    -- lists, and a fault repopulating one must not be able to stop the other.
+    guard("macro property", function()
+        if changes.macros then updateMacroProperty() end
+    end)
 end
 
 function OnDriverInit()
@@ -456,6 +568,12 @@ end
 
 local ACTIONS = {
     REFRESH_FROM_DEVICE = function() DRIVER.session:refresh() end,
+    -- Runs whatever the Macro property currently shows. Reading the property
+    -- here rather than caching a selection keeps one source of truth: Composer
+    -- owns what the installer chose.
+    RUN_SELECTED_MACRO = function()
+        runMacro(Properties["Macro"], "Run Selected Macro")
+    end,
     PRINT_STATE = function()
         print("HTP-1 state:")
         for key, value in pairs(DRIVER.state.fields) do
@@ -590,6 +708,15 @@ PROGRAMMING_COMMANDS["Set Dirac Slot"] = function(params)
         return
     end
     DRIVER.session:write("/cal/currentdiracslot", slot)
+end
+
+-- A STRING parameter, not a LIST: the macros a unit holds are its own, and a
+-- fixed list declared in driver.xml could only be wrong. The name the owner
+-- gave the macro is the likely thing to type; the slot key (cmda, preset1,
+-- cmdcustom3) is accepted too, for programming that wants to name a macro
+-- without depending on what it is currently called.
+PROGRAMMING_COMMANDS["Run Macro"] = function(params)
+    runMacro(params.Macro, "Run Macro")
 end
 
 -- Names only, for the manifest test's coverage check -- same pattern as
