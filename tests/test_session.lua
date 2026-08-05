@@ -221,6 +221,45 @@ return {
         end,
     },
     {
+        name = "a nil write is refused rather than corrupting the queue",
+        fn = function()
+            local s, transport = build()
+            s:start(); s:onOpen(); s:onMessage(msoMessage())
+            local before = #transport.sent
+
+            H.isFalse(s:write("/volume", nil), "a nil write should be refused")
+            s:write("/volume", -30)
+            mock.advance(50)
+
+            H.equal(#transport.sent, before + 1)
+            local ops = JSON:decode(transport.sent[#transport.sent]:sub(11))
+            H.count(ops, 1, "the refused write must not leave a duplicate in the queue")
+            H.equal(ops[1].value, -30)
+        end,
+    },
+    {
+        name = "each flush gets its own reconcile window",
+        fn = function()
+            local s, transport = build()
+            s:start(); s:onOpen(); s:onMessage(msoMessage())
+
+            s:write("/volume", -30)
+            mock.advance(50)            -- first flush, window opens
+            mock.advance(1000)
+            s:write("/muted", true)
+            mock.advance(50)            -- second flush, window should restart
+            local afterSecondFlush = #transport.sent
+
+            -- Under the first write's inherited deadline this would already have
+            -- re-read; the second write is entitled to its full grace period.
+            mock.advance(1000)
+            H.equal(#transport.sent, afterSecondFlush, "too early to re-read")
+
+            mock.advance(1000)
+            H.equal(transport.sent[#transport.sent], "getmso", "then it re-reads")
+        end,
+    },
+    {
         name = "stop closes the transport and cancels pending work",
         fn = function()
             local s, transport = build()

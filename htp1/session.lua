@@ -124,6 +124,16 @@ function Session:write(path, value)
         return false
     end
 
+    -- nil doubles as this queue's "not queued yet" sentinel, so accepting a nil
+    -- value would break coalescing: Lua stores no entry, the path is appended to
+    -- `order` again on the next write, and one changemso carries the same op
+    -- twice. It would also encode a `replace` with no value at all. No path this
+    -- driver writes takes a null, so this is a caller bug worth surfacing.
+    if value == nil then
+        self.log:error("refusing a nil write to " .. tostring(path))
+        return false
+    end
+
     if self.queue[path] == nil then table.insert(self.order, path) end
     self.queue[path] = value
     self.pending[path] = value
@@ -151,7 +161,11 @@ function Session:flush()
 
     self.transport:send(Protocol.encodeChange(ops))
 
-    if not self.reconcileTimer then
+    -- Re-armed per flush, not left running from the first one. Inheriting an
+    -- older deadline would give a later write less than its full grace period
+    -- and re-read the document while its confirmation was still in flight.
+    if self.reconcileTimer then self.reconcileTimer:Cancel() end
+    do
         self.reconcileTimer = C4:SetTimer(self.reconcileMs, function()
             self.reconcileTimer = nil
             if next(self.pending) ~= nil then
