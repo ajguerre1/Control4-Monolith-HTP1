@@ -120,12 +120,19 @@ if (-not (Test-Path -LiteralPath $buildDir)) {
 }
 
 $outputPath = Join-Path $buildDir $OutputName
-if (Test-Path -LiteralPath $outputPath) {
-    Remove-Item -LiteralPath $outputPath -Force
+
+# Build to a temporary name and move it into place only once it is complete.
+# Writing straight to $outputPath means a failure mid-write -- a full disk, a
+# locked file -- leaves a truncated but structurally valid archive under the
+# exact name Composer installs from, with the previous good build already
+# deleted. Nothing on disk would mark it as partial.
+$tempPath = "$outputPath.partial"
+if (Test-Path -LiteralPath $tempPath) {
+    Remove-Item -LiteralPath $tempPath -Force
 }
 
 $archive = [System.IO.Compression.ZipFile]::Open(
-    $outputPath, [System.IO.Compression.ZipArchiveMode]::Create)
+    $tempPath, [System.IO.Compression.ZipArchiveMode]::Create)
 try {
     foreach ($entry in $payload) {
         [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
@@ -136,6 +143,8 @@ try {
 finally {
     $archive.Dispose()
 }
+
+Move-Item -LiteralPath $tempPath -Destination $outputPath -Force
 
 # --- Report ------------------------------------------------------------------
 
