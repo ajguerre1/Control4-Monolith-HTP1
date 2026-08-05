@@ -60,6 +60,13 @@ function Transport:connect()
     if self.state == "connecting" or self.state == "handshaking" or self.state == "open" then
         return
     end
+    -- A reconnect may already be armed. Leaving it running lets the timer race
+    -- this attempt: its callback forces the state back to idle and reconnects
+    -- on top of a connection that may by then be live.
+    if self.reconnectTimer then
+        self.reconnectTimer:Cancel()
+        self.reconnectTimer = nil
+    end
     self.rxBuf, self.reader = "", nil
     self.deliberate = false
     self.state = "connecting"
@@ -240,12 +247,21 @@ end
 function Transport:_scheduleReconnect()
     if self.deliberate then return end
     if self.reconnectTimer then return end
+    -- _shutdown hands control to the driver's onClose before reaching here. If
+    -- that callback reconnected, arming a timer now would leave one dangling
+    -- over a live connection.
+    if self.state ~= "closed" then return end
 
     self.backoffStep = math.min(self.backoffStep + 1, #self.backoffMs)
-    local delay = self.jitter(self.backoffMs[self.backoffStep])
+    -- A caller-supplied jitter is not trusted to stay positive; the timer API
+    -- rejects a non-positive interval.
+    local delay = math.max(1, tonumber(self.jitter(self.backoffMs[self.backoffStep])) or 1)
     self.log:debug("reconnecting in", delay, "ms")
     self.reconnectTimer = C4:SetTimer(delay, function()
         self.reconnectTimer = nil
+        -- Anything other than closed means a connect happened while this was
+        -- armed, so there is nothing to resume.
+        if self.state ~= "closed" then return end
         self.state = "idle"
         self:connect()
     end, false)

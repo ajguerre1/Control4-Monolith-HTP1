@@ -362,4 +362,87 @@ return {
             end
         end,
     },
+    {
+        name = "a close cancels a reconnect that was already armed",
+        fn = function()
+            -- The close-from-open case above can never exercise the
+            -- cancellation, because no timer is pending there. Only a close
+            -- that follows an unexpected drop does.
+            local t = build({ jitter = function(ms) return ms end })
+            t:connect()
+            t:onConnectionStatus("OFFLINE")     -- arms the reconnect
+            mock.clearCalls()
+            t:close()
+            mock.advance(120000)
+            for _, c in ipairs(mock.calls) do
+                H.isTrue(c.name ~= "NetConnect",
+                    "an armed reconnect must not survive a deliberate close")
+            end
+        end,
+    },
+    {
+        name = "reconnection resumes after a deliberate close and a fresh connect",
+        fn = function()
+            -- Pins that connect() clears the deliberate flag. Without it the
+            -- driver would never reconnect again after one manual close -- a
+            -- silent permanent failure, the worst outcome for this driver.
+            local t = build({ jitter = function(ms) return ms end })
+            t:connect(); t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            t:close()
+            t:connect(); t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            H.equal(t.state, "open", "the fresh connect should have opened")
+            mock.clearCalls()
+            t:onConnectionStatus("OFFLINE")     -- an unexpected drop this time
+            mock.advance(2000)
+            local reconnects = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then reconnects = reconnects + 1 end
+            end
+            H.equal(reconnects, 1, "an unexpected drop after a manual close must still recover")
+        end,
+    },
+    {
+        name = "a manual connect cancels a pending reconnect rather than racing it",
+        fn = function()
+            local t = build({ jitter = function(ms) return ms end })
+            t:connect()
+            t:onConnectionStatus("OFFLINE")     -- arms a 2000 ms reconnect
+            mock.clearCalls()
+            t:connect()                          -- manual attempt gets in first
+            t:onConnectionStatus("ONLINE"); t:onData(ACCEPT)
+            H.equal(t.state, "open")
+            -- Past the 2000 ms the stale timer was armed for, but short of the
+            -- 30 s keepalive ping, whose pong nothing answers in this test.
+            mock.advance(5000)
+            H.equal(t.state, "open", "a stale timer must not stomp a live connection")
+            local reconnects = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then reconnects = reconnects + 1 end
+            end
+            H.equal(reconnects, 1, "exactly one connect attempt, not two")
+        end,
+    },
+    {
+        name = "a reconnect armed from inside onClose is not doubled",
+        fn = function()
+            -- _shutdown hands control to onClose before scheduling. A driver
+            -- that reconnects from that callback must not also get a timer.
+            local reconnecting
+            local t = build({
+                jitter = function(ms) return ms end,
+                onClose = function() if reconnecting then reconnecting() end end,
+            })
+            reconnecting = function() t:connect() end
+            t:connect()
+            mock.clearCalls()
+            t:onConnectionStatus("OFFLINE")
+            H.equal(t.state, "connecting", "onClose reconnected immediately")
+            mock.advance(120000)
+            local reconnects = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then reconnects = reconnects + 1 end
+            end
+            H.equal(reconnects, 1, "no dangling timer on top of the manual attempt")
+        end,
+    },
 }
