@@ -49,22 +49,36 @@ end
 -- Lifecycle
 --------------------------------------------------------------------------------
 
+-- The normal Composer order is: add the driver, THEN set its IP. Reading this
+-- once at construction would leave self.host == "" for the driver's entire
+-- life if the first connect attempt lands before the address is set, so the
+-- transport calls this again on every connect() instead of trusting a cached
+-- value.
+local function readHost()
+    local ok, address = pcall(function()
+        return C4:GetBindingAddress(Mapping.NETWORK_BINDING)
+    end)
+    if ok and type(address) == "string" then return address end
+    return ""
+end
+
 local function buildDriver()
+    -- Two HTP-1 instances on one controller share Lua's default, deterministic
+    -- seed unless something breaks the tie: without this, both instances draw
+    -- the identical jitter sequence and reconnect in lockstep after a shared
+    -- network blip -- precisely what the jitter in transport.lua exists to
+    -- prevent. Must run before the transport (and its jitter closure) exists.
+    math.randomseed(C4:GetDeviceID())
+
     local log = Log.new("HTP-1")
     log:setMode(Properties["Debug Mode"])
 
     local state = State.new()
 
-    local host = ""
-    local ok, address = pcall(function()
-        return C4:GetBindingAddress(Mapping.NETWORK_BINDING)
-    end)
-    if ok and type(address) == "string" then host = address end
-
     local transport = Transport.new({
         binding = Mapping.NETWORK_BINDING,
         port = 80,
-        host = host,
+        hostProvider = readHost,
         path = "/ws/controller",
         log = log,
         onOpen    = function() DRIVER.session:onOpen() end,
@@ -179,6 +193,18 @@ function OnConnectionStatusChanged(binding, port, status)
     guard("OnConnectionStatusChanged", function()
         if binding ~= Mapping.NETWORK_BINDING then return end
         DRIVER.transport:onConnectionStatus(status)
+    end)
+end
+
+-- Fires when a binding's target changes in Composer -- in particular, when the
+-- network binding's IP is set for the first time after the driver was added
+-- with none. connect() already no-ops while a connection attempt is live, so
+-- this only matters while the transport is genuinely idle or waiting on a
+-- still-empty address.
+function OnBindingChanged(idBinding, class, bIsBound)
+    guard("OnBindingChanged", function()
+        if idBinding ~= Mapping.NETWORK_BINDING then return end
+        DRIVER.transport:connect()
     end)
 end
 

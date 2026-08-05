@@ -6,6 +6,10 @@ local M = {}
 M.calls, M.printed, M.sent, M.timers, M.now = {}, {}, {}, {}, 0
 M.properties, M.variables = {}, {}
 M.hashAlgorithms = { MD5 = true, SHA1 = true }
+-- What C4:GetBindingAddress(6001) answers. Invented, reserved-for-testing
+-- hostname (RFC 2606), never a real one. Tests that care about the "no
+-- address yet" case override this before the driver reads it.
+M.bindingAddress = "unit.invalid"
 
 local function record(name, args) table.insert(M.calls, { name = name, args = args }) end
 
@@ -53,6 +57,7 @@ function M.install(properties)
     M.calls, M.printed, M.sent, M.timers, M.now = {}, {}, {}, {}, 0
     M.variables = {}
     M.properties = properties or {}
+    M.bindingAddress = "unit.invalid"
 
     _G.Properties = M.properties
     _G.print = function(...)
@@ -140,6 +145,7 @@ function M.install(properties)
         end,
         GetDriverConfigInfo = function(_, key) return "test-" .. key end,
         GetDeviceID = function() return 4242 end,
+        GetBindingAddress = function(_, binding) return M.bindingAddress end,
     }
 
     return M

@@ -299,8 +299,16 @@ return {
     {
         name = "the backoff ladder is walked and then held",
         fn = function()
+            -- Each rung leaves the auto-reconnect sitting unanswered in
+            -- "connecting" for up to 60000 ms, which the connect watchdog
+            -- (15000 ms default) would otherwise also trip on -- a real effect,
+            -- but not what this test is isolating. A generous override keeps
+            -- the ladder itself under test; the watchdog has its own tests.
             local delays = {}
-            local t = build({ jitter = function(ms) table.insert(delays, ms) return ms end })
+            local t = build({
+                jitter = function(ms) table.insert(delays, ms) return ms end,
+                connectTimeoutMs = 10000000,
+            })
             for _ = 1, 8 do
                 t:connect()
                 t:onConnectionStatus("OFFLINE")
@@ -318,8 +326,13 @@ return {
     {
         name = "a successful open resets the backoff ladder",
         fn = function()
+            -- See the ladder test above for why the watchdog is pushed out of
+            -- range here too.
             local delays = {}
-            local t = build({ jitter = function(ms) table.insert(delays, ms) return ms end })
+            local t = build({
+                jitter = function(ms) table.insert(delays, ms) return ms end,
+                connectTimeoutMs = 10000000,
+            })
             t:connect(); t:onConnectionStatus("OFFLINE"); mock.advance(60000)
             t:connect(); t:onConnectionStatus("OFFLINE"); mock.advance(60000)
             H.equal(delays[2], 4000, "the ladder advanced")
@@ -437,12 +450,179 @@ return {
             mock.clearCalls()
             t:onConnectionStatus("OFFLINE")
             H.equal(t.state, "connecting", "onClose reconnected immediately")
-            mock.advance(120000)
+            -- Short of the connect watchdog (15000 ms default): this test is
+            -- about the old backoff-timer path only. The watchdog's own retry
+            -- behaviour, over a longer horizon, has its own tests below.
+            mock.advance(5000)
             local reconnects = 0
             for _, c in ipairs(mock.calls) do
                 if c.name == "NetConnect" then reconnects = reconnects + 1 end
             end
-            H.equal(reconnects, 1, "no dangling timer on top of the manual attempt")
+            H.equal(reconnects, 1, "no dangling backoff timer on top of the manual attempt")
+        end,
+    },
+    {
+        name = "the connect watchdog trips if online never arrives",
+        fn = function()
+            local t, events = build()
+            t:connect()
+            H.equal(t.state, "connecting")
+            mock.advance(14999)
+            H.equal(t.state, "connecting", "not yet")
+            mock.advance(1)
+            H.equal(t.state, "closed", "a socket that never confirms ONLINE must not wedge forever")
+            H.isTrue(events.closed[1]:find("timed out", 1, true) ~= nil,
+                "the reason should name the timeout: " .. tostring(events.closed[1]))
+        end,
+    },
+    {
+        name = "the connect watchdog also covers a stalled handshake",
+        fn = function()
+            -- The exact scenario from the field: TCP accepts and Director
+            -- reports ONLINE, but the unit's /ws/controller route is not live
+            -- yet, so the 101 never arrives.
+            local t, events = build()
+            t:connect()
+            t:onConnectionStatus("ONLINE")
+            H.equal(t.state, "handshaking")
+            mock.advance(15000)
+            H.equal(t.state, "closed")
+            H.isTrue(events.closed[1]:find("timed out after 15000 ms", 1, true) ~= nil,
+                tostring(events.closed[1]))
+        end,
+    },
+    {
+        name = "a clean open cancels the watchdog so it cannot fire on a healthy connection",
+        fn = function()
+            local t, events = build()
+            t:connect()
+            t:onConnectionStatus("ONLINE")
+            t:onData(ACCEPT)
+            H.equal(t.state, "open")
+            mock.advance(20000)
+            H.equal(t.state, "open", "the watchdog must not fire after a clean open")
+            H.count(events.closed, 0)
+        end,
+    },
+    {
+        name = "connectTimeoutMs is configurable",
+        fn = function()
+            local t, events = build({ connectTimeoutMs = 5000 })
+            t:connect()
+            mock.advance(4999)
+            H.equal(t.state, "connecting")
+            mock.advance(1)
+            H.equal(t.state, "closed")
+            H.isTrue(events.closed[1]:find("5000", 1, true) ~= nil,
+                "the reason should quote the configured timeout: " .. tostring(events.closed[1]))
+        end,
+    },
+    {
+        name = "a watchdog trip still recovers through the normal backoff ladder",
+        fn = function()
+            local t = build({ jitter = function(ms) return ms end })
+            t:connect()
+            t:onConnectionStatus("ONLINE")
+            mock.clearCalls()
+            mock.advance(15000)   -- watchdog trips, first backoff rung armed
+            local connects = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then connects = connects + 1 end
+            end
+            H.equal(connects, 0, "not yet -- the backoff delay has not elapsed")
+            mock.advance(2000)
+            connects = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then connects = connects + 1 end
+            end
+            H.equal(connects, 1, "the standard ladder recovers from a watchdog trip")
+        end,
+    },
+    {
+        name = "closing before the watchdog fires does not leave it armed for the next attempt",
+        fn = function()
+            -- Proves the watchdog cannot leak across reconnects: if _shutdown
+            -- failed to cancel it, this stale timer would fire mid-way through
+            -- the second, successful connection and kill it wrongly.
+            local t, events = build()
+            t:connect()
+            t:onConnectionStatus("ONLINE")   -- handshaking, watchdog armed
+            t:close()                         -- legitimately produces one close event
+            t:connect()
+            t:onConnectionStatus("ONLINE")
+            t:onData(ACCEPT)
+            H.equal(t.state, "open")
+            local closedBefore = #events.closed
+            mock.advance(20000)   -- past the first attempt's 15000 ms deadline
+            H.equal(t.state, "open", "a leaked watchdog from the earlier attempt must not fire")
+            H.count(events.closed, closedBefore)
+        end,
+    },
+    {
+        name = "a hostProvider is re-read on every connect rather than cached at construction",
+        fn = function()
+            local host = ""
+            local t = build({ hostProvider = function() return host end })
+            t:connect()
+            H.equal(t.state, "closed", "no address configured yet")
+            H.count(mock.sent, 0)
+
+            host = "unit.invalid"
+            mock.clearCalls()
+            t:connect()
+            H.equal(t.state, "connecting", "the freshly read address is used")
+            local connects = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then connects = connects + 1 end
+            end
+            H.equal(connects, 1)
+        end,
+    },
+    {
+        name = "connecting with no host attempts nothing but still schedules a retry",
+        fn = function()
+            local host = ""
+            local t = build({
+                hostProvider = function() return host end,
+                jitter = function(ms) return ms end,
+            })
+            t:connect()
+            H.equal(t.state, "closed")
+            H.count(mock.sent, 0)
+            local connects = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then connects = connects + 1 end
+            end
+            H.equal(connects, 0, "no attempt without an address")
+
+            mock.clearCalls()
+            host = "unit.invalid"
+            mock.advance(2000)   -- the first backoff rung
+            connects = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then connects = connects + 1 end
+            end
+            H.equal(connects, 1, "a later address should be picked up by the scheduled retry")
+        end,
+    },
+    {
+        name = "the default random byte source never emits a NUL",
+        fn = function()
+            -- With the pre-fix math.random(0, 255), a 16-byte handshake key had
+            -- about a 6 % chance per call of an embedded NUL. Over 5000 bytes the
+            -- old range would almost certainly produce at least one; this range
+            -- (1..255) cannot produce one at all.
+            mock.install({})
+            local t = Transport.new({
+                binding = 6001, port = 80, host = "unit.invalid",
+                path = "/ws/controller", log = Log.new("test"),
+            })
+            local bytes = t.randomBytes(5000)
+            H.equal(#bytes, 5000)
+            for i = 1, #bytes do
+                H.isTrue(bytes:byte(i) ~= 0,
+                    "byte " .. i .. " was NUL: Base64Encode could truncate the key")
+            end
         end,
     },
 }

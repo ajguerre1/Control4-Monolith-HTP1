@@ -15,7 +15,7 @@ local DEFAULTS = {
     ["Debug Mode"] = "Off",
 }
 
-local function loadDriver(overrides)
+local function loadDriver(overrides, bindingAddress)
     local properties = {}
     for k, v in pairs(DEFAULTS) do properties[k] = v end
     for k, v in pairs(overrides or {}) do properties[k] = v end
@@ -29,6 +29,7 @@ local function loadDriver(overrides)
     for _, name in ipairs({ "DRIVER", "OnDriverInit", "ReceivedFromProxy" }) do _G[name] = nil end
 
     mock.install(properties)
+    if bindingAddress ~= nil then mock.bindingAddress = bindingAddress end
     dofile("driver.lua")
     OnDriverInit()
     OnDriverLateInit()
@@ -167,6 +168,62 @@ return {
             for _, c in ipairs(mock.calls) do
                 H.isTrue(c.name ~= "NetConnect", "a destroyed driver must not reconnect")
             end
+        end,
+    },
+    {
+        name = "adding the driver before its IP is set does not attempt to connect to nothing",
+        fn = function()
+            -- The normal Composer order: add the driver, THEN set the IP. A
+            -- caching read at buildDriver() time would leave the transport
+            -- dialing an empty host for the driver's entire life.
+            loadDriver(nil, "")
+            local connects = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then connects = connects + 1 end
+            end
+            H.equal(connects, 0, "no address yet, so no connection should be attempted")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "OnBindingChanged on the network binding retries once an address is set",
+        fn = function()
+            loadDriver(nil, "")
+            mock.bindingAddress = "unit.invalid"
+            OnBindingChanged(Mapping.NETWORK_BINDING, "NETWORK", true)
+            local connects = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then connects = connects + 1 end
+            end
+            H.equal(connects, 1, "the newly bound address should trigger a connect attempt")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "OnBindingChanged for an unrelated binding is ignored",
+        fn = function()
+            loadDriver(nil, "")
+            OnBindingChanged(Mapping.PROXY_BINDING, "PROXY", true)
+            local connects = 0
+            for _, c in ipairs(mock.calls) do
+                if c.name == "NetConnect" then connects = connects + 1 end
+            end
+            H.equal(connects, 0, "the proxy binding has nothing to do with the network socket")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "the driver seeds math.random from the device id so instances decorrelate",
+        fn = function()
+            -- Without this, every driver instance shares Lua's default,
+            -- deterministic seed and two HTP-1s on one controller would
+            -- reconnect in lockstep -- exactly what the jitter exists to break.
+            local recordedSeed
+            local realRandomseed = math.randomseed
+            math.randomseed = function(seed) recordedSeed = seed; realRandomseed(seed) end
+            loadDriver()
+            math.randomseed = realRandomseed
+            H.equal(recordedSeed, 4242, "seeded from the mock's GetDeviceID")
         end,
     },
 }

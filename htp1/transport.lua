@@ -21,7 +21,17 @@ local MAX_HANDSHAKE_BYTES = 8192
 
 local function defaultRandomBytes(count)
     local bytes = {}
-    for i = 1, count do bytes[i] = string.char(math.random(0, 255)) end
+    for i = 1, count do
+        -- 1..255, not 0..255. This doubles as the Sec-WebSocket-Key material,
+        -- which RFC 6455 requires to decode to exactly 16 raw bytes. If
+        -- C4:Base64Encode is C-string backed, an embedded NUL truncates its
+        -- input, silently handing the server a key shorter than 16 bytes -- a
+        -- strict server then answers 400, intermittently, about 6 % of the
+        -- time. The same function also produces the frame mask, where a NUL
+        -- byte is completely harmless (XOR does not care), so restricting the
+        -- range is purely defensive and only for the key's sake.
+        bytes[i] = string.char(math.random(1, 255))
+    end
     return table.concat(bytes)
 end
 
@@ -41,6 +51,13 @@ function Transport.new(opts)
         reader  = nil,
         pingIntervalMs = opts.pingIntervalMs or 30000,
         pongTimeoutMs  = opts.pongTimeoutMs or 10000,
+        -- Covers both "connecting" and "handshaking": a unit that accepts the
+        -- TCP connection but never sends a 101 (its web server bound the port
+        -- before /ws/controller was live, say, after a reboot) would otherwise
+        -- leave the transport waiting forever, since nothing else can move it
+        -- out of either state. One shot per attempt; _completeHandshake and
+        -- _shutdown both disarm it.
+        connectTimeoutMs = opts.connectTimeoutMs or 15000,
         backoffMs      = opts.backoffMs or { 2000, 4000, 8000, 16000, 30000, 60000 },
         jitter         = opts.jitter or function(ms)
             -- +/-20 %. Two instances on one controller must not reconnect in
@@ -52,8 +69,18 @@ function Transport.new(opts)
         pingTimer      = nil,
         pongTimer      = nil,
         reconnectTimer = nil,
+        connectTimer   = nil,
+        hostProvider   = opts.hostProvider,
     }, Transport)
     return t
+end
+
+function Transport:_armConnectTimeout()
+    if self.connectTimer then self.connectTimer:Cancel() end
+    self.connectTimer = C4:SetTimer(self.connectTimeoutMs, function()
+        self.connectTimer = nil
+        self:_shutdown("connect timed out after " .. self.connectTimeoutMs .. " ms")
+    end, false)
 end
 
 function Transport:connect()
@@ -67,10 +94,24 @@ function Transport:connect()
         self.reconnectTimer:Cancel()
         self.reconnectTimer = nil
     end
-    self.rxBuf, self.reader = "", nil
     self.deliberate = false
+
+    -- Re-read rather than trust whatever was passed to Transport.new: Composer
+    -- lets the driver be added before its IP is set, and the address can also
+    -- change later. A cached host would keep dialing an empty string, or a
+    -- stale one, for the rest of the driver's life.
+    if self.hostProvider then self.host = self.hostProvider() end
+    if not self.host or self.host == "" then
+        self.log:debug("no address configured yet; will retry")
+        self.state = "closed"
+        self:_scheduleReconnect()
+        return
+    end
+
+    self.rxBuf, self.reader = "", nil
     self.state = "connecting"
     self.log:debug("connecting to", self.host)
+    self:_armConnectTimeout()
     C4:NetConnect(self.binding, self.port)
 end
 
@@ -79,6 +120,10 @@ function Transport:_shutdown(reason)
     self.state = "closed"
     self.rxBuf, self.reader = "", nil
     self:_stopKeepalive()
+    if self.connectTimer then
+        self.connectTimer:Cancel()
+        self.connectTimer = nil
+    end
     C4:NetDisconnect(self.binding, self.port)
     self.log:debug("closed:", reason)
     self.onClose(reason)
@@ -142,6 +187,10 @@ function Transport:_completeHandshake(head)
         return self:_shutdown("handshake response is not a websocket upgrade")
     end
 
+    if self.connectTimer then
+        self.connectTimer:Cancel()
+        self.connectTimer = nil
+    end
     self.state = "open"
     self.reader = Frame.newReader()
     self.backoffStep = 0

@@ -27,7 +27,14 @@ function Proxy:setPowerOffAction(action) self.powerOffAction = action end
 
 function Proxy:_notify(command, params)
     params = params or {}
-    params.OUTPUT = tostring(Mapping.ROOM_OUTPUT)
+    params.OUTPUT = Mapping.ROOM_OUTPUT
+    -- Director serialises tParams for the proxy, and the real proxy is not as
+    -- forgiving of a raw boolean or number as the test mock is. Every value
+    -- goes through tostring here, uniformly, rather than leaving each call
+    -- site to remember which of its params need it.
+    for key, value in pairs(params) do
+        params[key] = tostring(value)
+    end
     C4:SendToProxy(Mapping.PROXY_BINDING, command, params, "NOTIFY")
 end
 

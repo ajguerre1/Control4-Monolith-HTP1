@@ -12,6 +12,14 @@ local Protocol = require("htp1.protocol")
 local Session = {}
 Session.__index = Session
 
+-- A parse failure means the unit sent bytes this driver could not decode as
+-- its own protocol -- the 38 KB mso reply is the realistic case. Below this
+-- many consecutive failures the fastest recovery is just asking again; at it,
+-- something is wrong enough that re-reading at line rate would only turn one
+-- bad reply into an unthrottled request storm, plus a log line per iteration.
+-- The reconcile timer and a fresh reconnect remain the way out.
+local MAX_PARSE_FAILURES = 3
+
 function Session.new(opts)
     return setmetatable({
         transport   = opts.transport,
@@ -27,6 +35,7 @@ function Session.new(opts)
         pending     = {},   -- path -> value awaiting the unit's confirmation
         flushTimer  = nil,
         reconcileTimer = nil,
+        parseFailures  = 0,
     }, Session)
 end
 
@@ -63,6 +72,7 @@ function Session:onClose(reason)
     -- Anything queued belongs to a conversation that no longer exists. Replaying
     -- it after a reconnect would apply a stale command minutes later.
     self.queue, self.order, self.pending = {}, {}, {}
+    self.parseFailures = 0
     if self.connected then
         self.connected = false
         self.onConnected(false)
@@ -73,10 +83,24 @@ function Session:onMessage(text)
     local message = Protocol.parse(text)
 
     if message.err then
-        self.log:error("undecodable message from the unit: " .. message.err)
-        self:refresh()
+        self.parseFailures = self.parseFailures + 1
+        if self.parseFailures < MAX_PARSE_FAILURES then
+            self.log:error("undecodable message from the unit: " .. message.err)
+            self:refresh()
+        elseif self.parseFailures == MAX_PARSE_FAILURES then
+            -- The cap: log exactly once here, then go quiet. Re-reading a
+            -- reply that keeps failing to decode would only re-request it at
+            -- line rate; every failure past this one is dropped on the floor
+            -- until the reconcile timer or a reconnect gives the unit a fresh
+            -- chance to answer.
+            self.log:error("undecodable message from the unit: " .. message.err ..
+                " (" .. MAX_PARSE_FAILURES .. " consecutive failures, giving up until " ..
+                "the next reconcile or reconnect)")
+        end
         return
     end
+
+    self.parseFailures = 0
 
     if message.verb == "mso" then
         local changes = self.state:applyDocument(message.arg)

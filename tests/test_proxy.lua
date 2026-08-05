@@ -301,7 +301,7 @@ return {
             H.isTrue(mock.lastProxyCall(BINDING, "ON") ~= nil, "power state")
             local volume = mock.lastProxyCall(BINDING, "VOLUME_LEVEL_CHANGED")
             H.isTrue(volume ~= nil, "volume")
-            H.equal(volume.args[3].LEVEL, 50, "-25 dB of -50..0 is 50 %")
+            H.equal(volume.args[3].LEVEL, "50", "-25 dB of -50..0 is 50 %, sent as a string")
             H.equal(tonumber(volume.args[3].OUTPUT), OUTPUT, "addressed to the room end-point")
             H.isTrue(mock.lastProxyCall(BINDING, "MUTE_CHANGED") ~= nil, "mute")
             local input = mock.lastProxyCall(BINDING, "INPUT_OUTPUT_CHANGED")
@@ -329,7 +329,7 @@ return {
             mock.clearCalls()
             session:onMessage('msoupdate [{"op":"replace","path":"/volume","value":-10}]')
             local volume = mock.lastProxyCall(BINDING, "VOLUME_LEVEL_CHANGED")
-            H.equal(volume.args[3].LEVEL, 80, "-10 dB of -50..0")
+            H.equal(volume.args[3].LEVEL, "80", "-10 dB of -50..0, sent as a string")
         end,
     },
     {
@@ -339,6 +339,30 @@ return {
             mock.clearCalls()
             session:onMessage('msoupdate [{"op":"replace","path":"/powerIsOn","value":false}]')
             H.isTrue(mock.lastProxyCall(BINDING, "OFF") ~= nil)
+        end,
+    },
+    {
+        name = "every notification parameter is stringified, not just OUTPUT",
+        fn = function()
+            -- Director serialises tParams for the proxy, and the real proxy is
+            -- not as forgiving of a raw boolean or number as this test mock is.
+            -- _notify used to tostring() only OUTPUT; MUTE, AUDIO, VIDEO and
+            -- LEVEL went out as a boolean, booleans and a number respectively.
+            local proxy = build()
+            mock.clearCalls()
+            proxy:announce()
+
+            local mute = mock.lastProxyCall(BINDING, "MUTE_CHANGED")
+            H.equal(type(mute.args[3].MUTE), "string", "MUTE must be a string, not a boolean")
+            H.equal(mute.args[3].MUTE, "false")
+
+            local input = mock.lastProxyCall(BINDING, "INPUT_OUTPUT_CHANGED")
+            H.equal(type(input.args[3].AUDIO), "string", "AUDIO must be a string, not a boolean")
+            H.equal(input.args[3].AUDIO, "true")
+            H.equal(type(input.args[3].VIDEO), "string", "VIDEO must be a string, not a boolean")
+
+            local volume = mock.lastProxyCall(BINDING, "VOLUME_LEVEL_CHANGED")
+            H.equal(type(volume.args[3].LEVEL), "string", "LEVEL must be a string, not a number")
         end,
     },
     {

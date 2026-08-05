@@ -106,6 +106,54 @@ return {
         end,
     },
     {
+        name = "a run of parse failures stops re-reading once the cap is reached",
+        fn = function()
+            -- Pins the storm fix: the unit's own 38 KB mso reply failing to
+            -- decode must not turn into an unthrottled re-request loop, one
+            -- getmso and one C4:ErrorLog line per iteration forever.
+            local s, transport = build()
+            s:start(); s:onOpen(); s:onMessage(msoMessage())
+            local before = #transport.sent
+
+            s:onMessage("mso {not json")   -- failure 1, below the cap: re-reads
+            s:onMessage("mso {not json")   -- failure 2, below the cap: re-reads
+            H.equal(#transport.sent, before + 2, "both failures below the cap re-read")
+
+            s:onMessage("mso {not json")   -- failure 3 hits the cap: logs, stays quiet
+            H.equal(#transport.sent, before + 2, "at the cap, no further re-read")
+
+            s:onMessage("mso {not json")   -- failure 4, past the cap: fully silent
+            s:onMessage("mso {not json")   -- failure 5, past the cap: fully silent
+            H.equal(#transport.sent, before + 2,
+                "a run of failures must not become an unthrottled request storm")
+
+            local errorLines = 0
+            for _, line in ipairs(mock.printed) do
+                if line:find("undecodable message", 1, true) then errorLines = errorLines + 1 end
+            end
+            H.equal(errorLines, 3,
+                "one log per failure below the cap, plus exactly one at the cap -- " ..
+                "the two failures past it must stay silent")
+        end,
+    },
+    {
+        name = "a successfully parsed message resets the parse-failure counter",
+        fn = function()
+            -- Without the reset, two isolated bad frames days apart would
+            -- silently creep towards the cap and one day go quiet for good.
+            local s, transport = build()
+            s:start(); s:onOpen(); s:onMessage(msoMessage())
+
+            s:onMessage("mso {not json")   -- failure 1 of 3, re-reads
+            s:onMessage(msoMessage())      -- a good message: counter resets
+
+            local before = #transport.sent
+            s:onMessage("mso {not json")   -- failure 1 of 3 again, still re-reads
+            H.equal(#transport.sent, before + 1,
+                "a failure right after a good message must still be treated as the first")
+        end,
+    },
+    {
         name = "a close clears connected so programming can gate on it",
         fn = function()
             local s, _, _ = build()
