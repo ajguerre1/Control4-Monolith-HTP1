@@ -89,6 +89,18 @@ return {
         end,
     },
     {
+        name = "the do-nothing power option leaves the unit alone",
+        fn = function()
+            -- For a processor that stays powered: a room turning off, or a
+            -- stray program, must not be able to take the system down.
+            local proxy, _, transport = build({ powerOffAction = "Do Nothing" })
+            H.isTrue(proxy:handle(BINDING, "OFF", {}), "the command is still handled")
+            mock.advance(50)
+            H.equal(lastOps(transport), nil, "nothing is sent to the unit")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
         name = "SET_INPUT translates a connection binding into an input key",
         fn = function()
             local proxy, _, transport = build()

@@ -29,11 +29,13 @@ return {
         end,
     },
     {
-        name = "the firmware version is reduced to its version number",
+        name = "both version fields are projected, and told apart",
         fn = function()
             local s = State.new()
             s:applyDocument(F.modern())
-            H.equal(s.fields.firmware, "5.96", "the build date and newline are dropped")
+            H.equal(s.fields.systemVersion, "V2.1.1", "the release the unit calls itself")
+            H.equal(s.fields.avControllerVersion, "5.96",
+                "the internal component version, build date and newline dropped")
             H.equal(s.fields.serial, "0001")
         end,
     },
@@ -45,7 +47,8 @@ return {
             H.equal(s.fields.volume, -29)
             H.equal(s.fields.upmix, "dolby")
             H.equal(s.fields.vpl, -50)
-            H.equal(s.fields.firmware, "4.91")
+            H.equal(s.fields.systemVersion, "V1.13.3")
+            H.equal(s.fields.avControllerVersion, "4.91")
         end,
     },
     {

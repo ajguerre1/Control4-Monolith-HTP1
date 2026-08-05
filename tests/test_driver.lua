@@ -8,7 +8,8 @@ local Mapping = require("htp1.mapping")
 local JSON = require("module.json")
 
 local DEFAULTS = {
-    ["Driver Version"] = "", ["Model"] = "HTP-1", ["Firmware Version"] = "",
+    ["Driver Version"] = "", ["Model"] = "HTP-1",
+    ["System Software Version"] = "", ["AV Controller Version"] = "",
     ["Serial Number"] = "", ["Connection Status"] = "Not connected",
     ["Maximum Volume"] = "Unit maximum", ["Volume Ramp Rate"] = "100 ms",
     ["Power Off Action"] = "Standby", ["Adopt Input Labels"] = "Yes",
@@ -80,7 +81,9 @@ return {
             loadDriver()
             goLive()
             H.equal(Properties["Connection Status"], "Connected")
-            H.equal(Properties["Firmware Version"], "5.96")
+            H.equal(Properties["System Software Version"], "V2.1.1",
+                "the release an owner would recognise")
+            H.equal(Properties["AV Controller Version"], "5.96")
             H.assertNoErrorLog()
         end,
     },

@@ -21,16 +21,26 @@ local SCALAR_PATHS = {
     ["/cal/vpl"]               = "vpl",
     ["/cal/vph"]               = "vph",
     ["/unitname"]              = "unitName",
-    ["/versions/avController"] = "firmware",
+    ["/versions/avController"] = "avControllerVersion",
+    ["/versions/swVer"]        = "systemVersion",
     ["/versions/SerialNumber"] = "serial",
 }
 State.SCALAR_PATHS = SCALAR_PATHS
 
--- The unit reports its controller version as "5.96 Built Jul  8 2026, ...\n".
--- Only the number is useful in a Composer property.
+-- Two different versions, and the distinction matters to an installer.
+--
+-- `swVer` is the system software release, which is what the unit calls itself
+-- everywhere a human looks -- "V2.1.1", "V1.13.3" -- and what release notes and
+-- support conversations are about.
+--
+-- `avController` is an internal component version on its own numbering ("5.96",
+-- "4.91"), reported as "5.96 Built Jul  8 2026, 11:45:00\n". Showing that under
+-- a label like "Firmware Version" is actively misleading: it looks like a
+-- version the owner should recognise, and it is not one.
 local NORMALISE = {
-    firmware = function(value) return tostring(value):match("^%s*(%S+)") end,
-    serial   = function(value) return tostring(value) end,
+    avControllerVersion = function(value) return tostring(value):match("^%s*(%S+)") end,
+    systemVersion       = function(value) return tostring(value):match("^%s*(.-)%s*$") end,
+    serial              = function(value) return tostring(value) end,
 }
 
 local function resolve(container, pointer)
