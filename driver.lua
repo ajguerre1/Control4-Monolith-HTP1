@@ -389,7 +389,11 @@ end
 -- the list. For that, text is authoritative by construction -- it is the only
 -- thing Composer can hand back -- so matching anything else can only pick a
 -- different macro than the one shown. Same slot order and same first-match rule
--- as macroItems(), so the Nth entry in the list resolves to the Nth listed slot.
+-- as macroItems(): the FIRST slot whose display text matches wins. Where two
+-- slots render the same text -- two macros the owner gave one name, or a macro
+-- named exactly another slot's key -- both rows therefore resolve to the
+-- earlier slot, and the later row is unreachable. Composer hands back text and
+-- nothing else, so there is nothing here to tell the two rows apart.
 function resolveMacroByListedText(text)   -- forward-declared local, above
     if type(text) ~= "string" or text == "" then return nil end
     -- Belt and braces, and deliberately kept as such: macroEntryText can no
@@ -567,6 +571,34 @@ function DRIVER.onConnected(connected)
     updateVariables(connected)
     C4:FireEvent(connected and EVENTS.CONNECTED or EVENTS.DISCONNECTED)
     if not connected then return end
+
+    -- RE-ANCHOR THE MACRO SELECTION AGAINST THE DOCUMENT WE JUST READ.
+    --
+    -- DRIVER.macroSlot remembers WHICH SLOT the installer chose, so a rename on
+    -- the unit does not lose their selection. But a slot is only a reliable
+    -- handle while the driver is watching every msoupdate. Across an outage the
+    -- owner can delete the chosen macro and record a different one into the
+    -- same slot, and the remembered slot would then hand the selection -- and
+    -- Run Selected Macro -- to a macro they never picked.
+    --
+    -- Here, and only here, the persisted TEXT is the better handle: this runs
+    -- after applyDocument and before onChanges (see htp1/session.lua), so
+    -- state.macros already holds the fresh document while Properties["Macro"]
+    -- still holds the pre-outage choice -- exactly the two things to compare.
+    -- If the name is still there it re-anchors; if it is not, the selection
+    -- falls to the sentinel rather than to a stranger.
+    --
+    -- Clearing to nil instead would NOT work, and the difference is subtle: a
+    -- reconnect that changed nothing reports no macro changes, so
+    -- updateMacroProperty never runs to re-resolve it. The nil would sit until
+    -- the next rename -- the one moment the stored text and the fresh state are
+    -- guaranteed to disagree -- and the selection would be dropped then.
+    --
+    -- Only on a genuine transport transition: session.lua calls onConnected
+    -- when it was not connected, so a Refresh From Device on a driver that
+    -- never went away does not re-anchor, and should not. That driver saw
+    -- every push, and its slot is the trustworthy handle.
+    DRIVER.macroSlot = resolveMacroByListedText(Properties["Macro"])
 
     C4:UpdateProperty("System Software Version", DRIVER.state.fields.systemVersion or "")
     C4:UpdateProperty("AV Controller Version", DRIVER.state.fields.avControllerVersion or "")

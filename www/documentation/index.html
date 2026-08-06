@@ -191,7 +191,10 @@
         Your selection follows the <em>macro</em>, not the name it is shown under: renaming the
         macro you selected — or renaming or adding any other — leaves your choice intact, so
         programming built on <strong>Run Selected Macro</strong> keeps working across a rename on
-        the unit. Only deleting or emptying the macro you chose clears the selection.
+        the unit. Deleting or emptying the macro you chose clears the selection. So does renaming
+        it while the driver is not running to see the change — on the next connection the driver
+        can no longer tell which macro you meant, so it falls back to <code>(none)</code> rather
+        than guess at a different one.
         <br><br>
         One consequence worth knowing: a macro the owner names literally <code>(none)</code> is
         listed under its slot key instead, e.g. <code>preset1</code>, so that it stays selectable

@@ -1343,6 +1343,74 @@ return {
         end,
     },
     {
+        name = "a macro recorded into the slot of a deleted one, while the driver was away, " ..
+               "does not inherit the selection",
+        fn = function()
+            -- The remembered slot is only a reliable handle while the driver is
+            -- watching. Across an outage the owner can delete the chosen macro
+            -- and record a different one into the same slot -- and a driver
+            -- that trusted the slot would hand Run Selected Macro to a macro
+            -- nobody picked.
+            loadDriver()
+            goLive()
+            Properties["Macro"] = "Movie Night"     -- the installer chooses cmda
+            OnPropertyChanged("Macro")
+
+            OnConnectionStatusChanged(Mapping.NETWORK_BINDING, 80, "OFFLINE")
+            mock.advance(2500)                      -- first backoff rung; the transport retries
+            OnConnectionStatusChanged(Mapping.NETWORK_BINDING, 80, "ONLINE")
+            ReceivedFromNetwork(Mapping.NETWORK_BINDING, 80,
+                "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n")
+
+            local F = require("tests.fixtures")
+            local doc = F.modern()
+            doc.svronly.cmda = { { op = "replace", path = "/loudness", value = "on" } }
+            doc.svronly.macroNames.cmda = "Party"
+
+            mock.clearCalls()
+            sendFrame("mso " .. JSON:encode(doc))
+            H.equal(lastPropertyList("Macro").args[3], "(none)",
+                "the slot was recycled while the driver was away -- the installer's choice is " ..
+                "gone, and a macro they never picked must not inherit the selection")
+
+            mock.clearCalls()
+            ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
+            mock.advance(50)
+            H.equal(changeMsoCount(), 0, "and nothing runs")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a reconnect that changed nothing keeps the selection, and a later rename " ..
+               "still follows it",
+        fn = function()
+            -- The other half, and the one that rules out simply forgetting the
+            -- slot on connect: a reconnect whose document is identical reports
+            -- no macro change at all, so nothing would ever re-resolve a
+            -- cleared slot -- and the selection would be dropped later, at the
+            -- first rename, for no reason the installer could see.
+            loadDriver()
+            goLive()
+            Properties["Macro"] = "Preset 1"
+            OnPropertyChanged("Macro")
+
+            OnConnectionStatusChanged(Mapping.NETWORK_BINDING, 80, "OFFLINE")
+            mock.advance(2500)
+            OnConnectionStatusChanged(Mapping.NETWORK_BINDING, 80, "ONLINE")
+            ReceivedFromNetwork(Mapping.NETWORK_BINDING, 80,
+                "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n")
+            local F = require("tests.fixtures")
+            sendFrame("mso " .. JSON:encode(F.modern()))   -- nothing changed on the unit
+
+            mock.clearCalls()
+            pushUpdate("/svronly/macroNames/preset1", "Evening Listening")
+            H.equal(lastPropertyList("Macro").args[3], "Evening Listening",
+                "the selection is the installer's choice of MACRO, and must survive a " ..
+                "reconnect well enough that a later rename still moves with it")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
         name = "renaming the selected macro on the unit keeps it selected",
         fn = function()
             -- The selection is the installer's choice of MACRO, not of a string.
