@@ -3,11 +3,15 @@
 A [Control4](https://www.control4.com/) DriverWorks driver that exposes the Monoprice Monolith HTP-1
 AV processor as a `receiver`-class device over IP.
 
-> **Status: v1.0.6. Working on real hardware.**
-> Installed in a real Control4 project and confirmed working: the driver arrives unbound, and volume
-> and mute feedback reach Navigator and the handheld remotes. Not yet proven over days of daily use —
-> see [Known unknowns](#known-unknowns) for what is still unverified.
-> Per-release detail lives in the driver's own Documentation tab, which carries the changelog.
+> **Working on real hardware.**
+> Installed in a real Control4 project and confirmed working: the driver arrives unbound, volume and
+> mute feedback reach Navigator and the handheld remotes, and the driver's own icon shows in both
+> Composer and the Navigators. Not yet proven over days of daily use — see
+> [Known unknowns](#known-unknowns) for what is still unverified.
+>
+> The current version is whatever the [latest release](../../releases/latest) says. This line
+> deliberately does not repeat it: it drifted twice when it did. Per-release detail lives in the
+> driver's own Documentation tab, which carries the changelog.
 
 ## What it does today
 

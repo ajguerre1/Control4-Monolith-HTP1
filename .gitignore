@@ -17,3 +17,9 @@ mso_*.json
 # not be tracked.
 __pycache__/
 *.pyc
+
+# Agent scratch: session ledgers and task reports. These carry absolute build
+# paths from this machine. A nested .superpowers/sdd/.gitignore already ignores
+# them, but that puts the protection inside the thing being protected -- name it
+# here too, so it survives that file being moved or deleted.
+.superpowers/
