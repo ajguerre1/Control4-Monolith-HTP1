@@ -1,129 +1,52 @@
 # Control4 driver — Monoprice Monolith HTP-1
 
-A [Control4](https://www.control4.com/) DriverWorks driver that exposes the Monoprice Monolith HTP-1
-AV processor as a `receiver`-class device over IP.
+A Control4 driver for the Monoprice Monolith HTP-1 AV processor. It controls the unit over your
+network and keeps Control4 in step with it: changes made on the front panel, the unit's own remote or
+its web page appear in Control4 without being asked for.
 
-> **Working on real hardware.**
-> Installed in a real Control4 project and confirmed working: the driver arrives unbound, volume and
-> mute feedback reach Navigator and the handheld remotes, and the driver's own icon shows in both
-> Composer and the Navigators. Not yet proven over days of daily use — see
-> [Known unknowns](#known-unknowns) for what is still unverified.
->
-> The current version is whatever the [latest release](../../releases/latest) says. This line
-> deliberately does not repeat it: it drifted twice when it did. Per-release detail lives in the
-> driver's own Documentation tab, which carries the changelog.
+Working on real hardware. The current version is on the [releases page](../../releases/latest).
 
-## What it does today
-
-The HTP-1 acts as the AV hub of its room: sources connect to its HDMI inputs, it switches video and
-audio, drives the display and feeds the amplifiers. The driver gives Control4 the core functions it
-defines for AV receivers, with feedback in both directions — changes made from a Control4 remote,
-keypad or touchscreen reach the unit, and changes made from the front panel, the handheld remote or
-the unit's own web UI reach Control4.
+## Features
 
 - Power on, standby and sleep
-- Input selection across the HDMI, analog, coax, optical, AES/EBU, eARC, Bluetooth and USB inputs
-- Discrete volume, hold-to-ramp and mute
-- Listening-mode selection across all seven upmixers, as Control4 surround modes
-- Unattended reconnection after a unit reboot, a network drop or a controller restart
-
-## Planned
-
-Not in this release. Each lands as its own milestone:
-
-- **M2** — read-only status variables (surround mode, decoded and encoded formats, sample rate, video
-  resolution, colour space, HDR), and adopting the unit's own input labels
-- **M3** — Dirac on/off/bypass and slot selection; Loudness, Night, Dialog Enhance and Bass Enhance;
-  lip-sync delay; the unit's stored macros and presets by their own names
-
-Zone 2, the Roon input and per-input gain trim are deliberately out of scope.
-
-## How it talks to the unit
-
-One persistent WebSocket to `ws://<host>/ws/controller`. The driver is entirely event-driven and never
-polls: an idle connection carries no traffic beyond a keepalive ping every 30 seconds. State arrives
-as JSON-patch pushes, so anything changed by another controller, the front panel or the web UI shows
-up in Control4 too.
-
-There is no REST API on the unit — `/api`, `/mso` and `/status` all return 404 — and DriverWorks has
-no native WebSocket support, so the RFC 6455 codec is written from scratch in Lua. It is
-cross-validated byte-for-byte against Python's `websockets` in both directions.
+- Input selection across all 20 inputs, under the names the unit gives them
+- Volume, hold-to-ramp, and mute
+- Loudness from the room's own control
+- Listening mode selection
+- Dirac Live on and off, and filter selection by slot name
+- Night mode, dialog enhancement, bass enhancement and lip sync delay
+- Runs the macros already stored on the unit
+- Status for programming: input, volume, formats, sample rates and video
+- Events for connection, power, input and surround mode changes
+- Reconnects on its own after a network drop or a unit restart
+- Built-in documentation, in Composer's Documentation tab
 
 ## Requirements
 
 - Control4 OS 3.x
-- Monolith HTP-1 on firmware 1.13.x or 2.1.x, reachable on the network
+- Monolith HTP-1 on firmware 1.13.x or 2.1.x
+- The unit reachable on the network, at a fixed address or a DHCP reservation
 
-## Building
+## Installation
 
-```
-powershell -File tools/build-c4z.ps1
-```
+1. Download `Monolith.HTP1.c4z` from the [latest release](../../releases/latest).
+2. In Composer Pro: **Driver › Add or Update Driver or Agent…**, and select the file.
+3. Add the driver to a room.
+4. On the **Connections** tab, enter the unit's IP address.
+5. Bind your sources to the HDMI inputs, the display to an HDMI output, and the amplifiers to the
+   audio output.
+6. Bind the room to the **Room Selection** end-point.
 
-produces `build/Monolith.HTP1.c4z`. The build never installs — it writes to `build/` and stops. It
-fails rather than warns on a missing payload file, a `require` that resolves outside the payload, or a
-payload file git does not track.
+The driver claims no room end-points on its own. Every binding is yours to make.
 
-The archive name is load-bearing: Composer identifies a driver by file name, so building under a
-different name adds a second driver instead of updating the installed one.
+**Connection Status** showing *Connected*, with the version and serial fields filled in, confirms it
+is working.
 
-## Installing
+Full documentation is in the driver's **Documentation** tab in Composer.
 
-1. Copy `build/Monolith.HTP1.c4z` into `Documents\Control4\Drivers\`.
-2. Composer Pro → **Driver → Add or Update Driver**, then refresh the driver list.
-3. Add the driver to the room and set its IP address on the network connection (binding 6001).
-4. Bind sources to the HDMI inputs, the display to an HDMI output, the amplifiers to the audio output,
-   and the room to the type-7 end-point (7000).
+## License
 
-**Connection Status**, **Firmware Version** and **Serial Number** populating together is the proof
-that the socket opened and the unit's document parsed.
+[MIT](LICENSE).
 
-## Testing
-
-```
-luajit tests/run.lua
-```
-
-No controller and no device required: the framing, protocol, state and mapping layers have
-no dependency on the Control4 API, and the transport and proxy layers run against a mocked C4 API with
-virtual time. `tools/fake-htp1.py` serves the real protocol locally, with deliberate fault injection
-(mid-frame disconnects, byte-at-a-time delivery, a device that stops answering pings).
-
-## Known unknowns
-
-### Confirmed on hardware
-
-- **An empty `<roomAutoBind>` in the driver's own manifest does override the proxy's.** The `receiver`
-  proxy claims all five room roles on room-add; declaring the element empty here suppresses that, and
-  the driver arrives unbound. This is the only documented-by-experiment way to stop a `receiver`-class
-  driver claiming a room's endpoints — no shipped `.c4z` in a 148-driver library does it.
-- **The type-7 room end-point does not need `proxybindingid`.** Connection 7000 carries none, and room
-  volume and mute feedback still reach Navigator and the handheld remotes. Worth recording because the
-  sibling Control4-HA work lost roughly a dozen hardware iterations to volume feedback that never
-  appeared — that was the `amplifier` proxy, and this is not the same problem.
-- Stringified proxy notification parameters are accepted, and the framing survives the real
-  `SendToNetwork` / `ReceivedFromNetwork` path intact.
-
-### Still open
-
-- Whether the unit keeps its network stack alive with `powerIsOn` false. Both reference units report
-  `fastStart: "on"`, which suggests yes; if not, power-on needs Wake-on-LAN.
-- Whether `keep_connection` makes Director re-establish the socket behind the driver's own state
-  machine, and how that interacts with the connect watchdog.
-- Long-run reconnection behaviour: unit reboot, network drop and controller restart have not yet been
-  exercised over days.
-
-The full list, with every review finding and its disposition, is in
-`docs/ai/implementation/2026-08-04-feature-control4-htp1-driver-ledger.md`.
-
-## Documentation
-
-`docs/ai/` carries the requirements, design, plan, deployment and monitoring notes for the work.
-
-## Licence
-
-[MIT](LICENSE). Use it, change it, ship it; keep the copyright notice.
-
-The Monolith name and logo are Monoprice's. `assets/monolith-logo.png` is included so the driver's
-icons can be regenerated from source, and is used only to identify the product this driver controls.
+The Monolith name and logo are Monoprice's, used here to identify the product this driver controls.
 This project is not affiliated with or endorsed by Monoprice.
