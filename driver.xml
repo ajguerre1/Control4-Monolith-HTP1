@@ -6,7 +6,7 @@
 	<model>HTP-1</model>
 	<created>08/04/2026 12:00</created>
 	<modified>08/04/2026 12:00</modified>
-	<version>103</version>
+	<version>104</version>
 	<auto_update>false</auto_update>
 	<!-- Deliberately empty, overriding the receiver proxy's own roomAutoBind.
 	     That proxy claims AudioSelectionDevice, AudioVolumeDevice,
@@ -21,6 +21,11 @@
 	<controlmethod>IP</controlmethod>
 	<driver>DriverWorks</driver>
 	<config>
+		<!-- Renders in Composer's Documentation tab. A plain, self-contained page:
+		     the first-party drivers ship a 1.1 MB React bundle that renders a
+		     Markdown file, which would mean a build pipeline and two copies of the
+		     content free to drift apart. -->
+		<documentation file="www/documentation/index.html"/>
 		<script jit="1" file="driver.lua"/>
 		<properties>
 			<property>
@@ -116,11 +121,34 @@
 				<default>Off</default>
 				<readonly>false</readonly>
 			</property>
+			<!-- No <items>: a DYNAMIC_LIST is populated at runtime with
+			     C4:UpdatePropertyList, from the slot names the unit itself
+			     reports, not a fixed list declared here. -->
+			<property>
+				<name>Dirac Filter</name>
+				<type>DYNAMIC_LIST</type>
+				<default></default>
+				<readonly>false</readonly>
+			</property>
+			<!-- Also runtime-populated: the macros this unit actually stores,
+			     under the names its owner gave them. Slots with nothing stored
+			     in them are left out. Selecting one only selects it; the Run
+			     Selected Macro action below is what runs it. -->
+			<property>
+				<name>Macro</name>
+				<type>DYNAMIC_LIST</type>
+				<default></default>
+				<readonly>false</readonly>
+			</property>
 		</properties>
 		<actions>
 			<action>
 				<name>Refresh From Device</name>
 				<command>REFRESH_FROM_DEVICE</command>
+			</action>
+			<action>
+				<name>Run Selected Macro</name>
+				<command>RUN_SELECTED_MACRO</command>
 			</action>
 			<action>
 				<name>Print Input Labels</name>
@@ -131,7 +159,115 @@
 				<command>PRINT_STATE</command>
 			</action>
 		</actions>
-		<commands/>
+		<commands>
+			<!-- "Set Dirac Processing", not "Set Dirac": in a Composer program
+			     this sits next to "Set Dirac Slot" below, and a name that is a
+			     strict prefix of the other is a mis-click nobody sees. One turns
+			     Dirac on and off, the other chooses which filter it uses; each
+			     name now says which. -->
+			<command>
+				<name>Set Dirac Processing</name>
+				<description>Set NAME's Dirac Live processing to PARAM1.</description>
+				<params>
+					<param>
+						<name>Mode</name>
+						<type>LIST</type>
+						<items>
+							<item>Off</item>
+							<item>On</item>
+							<item>Bypass</item>
+						</items>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Set Night Mode</name>
+				<description>Set NAME's night mode to PARAM1.</description>
+				<params>
+					<param>
+						<name>Mode</name>
+						<type>LIST</type>
+						<items>
+							<item>Off</item>
+							<item>Auto</item>
+							<item>On</item>
+						</items>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Set Dialog Enhance</name>
+				<description>Set NAME dialog enhancement to PARAM1.</description>
+				<params>
+					<param>
+						<name>Level</name>
+						<type>RANGED_INTEGER</type>
+						<minimum>0</minimum>
+						<maximum>6</maximum>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Set Bass Enhance</name>
+				<description>Set NAME's bass enhancement to PARAM1.</description>
+				<params>
+					<param>
+						<name>Mode</name>
+						<type>LIST</type>
+						<items>
+							<item>Off</item>
+							<item>On</item>
+						</items>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Toggle Bass Enhance</name>
+				<description>Toggle NAME's bass enhancement.</description>
+			</command>
+			<command>
+				<name>Set Lip Sync Delay</name>
+				<description>Set NAME's lip sync delay to PARAM1 milliseconds.</description>
+				<params>
+					<param>
+						<name>Delay</name>
+						<type>RANGED_INTEGER</type>
+						<minimum>0</minimum>
+						<maximum>340</maximum>
+					</param>
+				</params>
+			</command>
+			<!-- For programming that wants a slot by number; an installer using
+			     Composer selects one by name through the Dirac Filter property
+			     instead. -->
+			<command>
+				<name>Set Dirac Slot</name>
+				<description>Set NAME's Dirac Live filter slot to PARAM1.</description>
+				<params>
+					<param>
+						<name>Slot</name>
+						<type>RANGED_INTEGER</type>
+						<minimum>0</minimum>
+						<maximum>5</maximum>
+					</param>
+				</params>
+			</command>
+			<!-- A STRING, not a LIST: the macros are the unit's own, so any
+			     fixed list declared here could only be wrong. Accepts the name
+			     the owner gave the macro or its slot key (cmda, preset1,
+			     cmdcustom3). The driver replays what the unit stores; it cannot
+			     create or edit a macro. -->
+			<command>
+				<name>Run Macro</name>
+				<description>Run NAME's stored macro PARAM1.</description>
+				<params>
+					<param>
+						<name>Macro</name>
+						<type>STRING</type>
+					</param>
+				</params>
+			</command>
+		</commands>
 	</config>
 	<proxies>
 		<proxy proxybindingid="5001" primary="True" name="Monolith HTP-1">receiver</proxy>
@@ -152,10 +288,10 @@
 		<has_toggle_mute_control>True</has_toggle_mute_control>
 		<has_discrete_input_select>True</has_discrete_input_select>
 		<has_discrete_surround_mode_select>True</has_discrete_surround_mode_select>
-		<!-- Flipped to True in M3, when the handlers exist. A declared capability
-		     with no handler is a dead button in the room UI. -->
-		<has_discrete_loudness_control>False</has_discrete_loudness_control>
-		<has_toggle_loudness_control>False</has_toggle_loudness_control>
+		<!-- Flipped to True in M3-T2: LOUDNESS_ON/OFF/TOGGLE now have handlers
+		     in htp1/proxy.lua, so this is no longer a dead button in the room UI. -->
+		<has_discrete_loudness_control>True</has_discrete_loudness_control>
+		<has_toggle_loudness_control>True</has_toggle_loudness_control>
 		<!-- The unit has parametric EQ and bass management, not tone controls. -->
 		<has_discrete_bass_control>False</has_discrete_bass_control>
 		<has_discrete_treble_control>False</has_discrete_treble_control>

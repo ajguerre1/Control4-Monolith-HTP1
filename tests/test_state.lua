@@ -460,4 +460,401 @@ return {
             H.equal(s.fields.raw, nil)
         end,
     },
+
+    --------------------------------------------------------------------------
+    -- Processing settings: loudness, night, dialog enhance, bass enhance,
+    -- dirac slot, lip sync -- and the dirac filter slot names.
+    --------------------------------------------------------------------------
+    {
+        name = "applying a modern document projects every processing field",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.fields.loudness, "off")
+            H.equal(s.fields.night, "off")
+            H.equal(s.fields.dialogEnhance, 3)
+            H.equal(s.fields.bassEnhance, "off")
+            H.equal(s.fields.diracSlot, 0)
+            H.equal(s.fields.lipSync, 20)
+        end,
+    },
+    {
+        name = "a targeted update on one processing field updates only that field",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({ { op = "replace", path = "/night", value = "auto" } })
+            H.equal(s.fields.night, "auto")
+            H.equal(next(changes), "night")
+            H.equal(s.fields.loudness, "off", "siblings are untouched")
+            H.equal(s.fields.dialogEnhance, 3, "siblings are untouched")
+        end,
+    },
+    {
+        name = "replacing the /cal container re-derives diracSlot and lipSync",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/cal", value = {
+                    vpl = -50, vph = 0, zeroPoint = 0, diracactive = "on",
+                    currentdiracslot = 5, lipsync = 120,
+                } },
+            })
+            H.equal(s.fields.diracSlot, 5)
+            H.equal(s.fields.lipSync, 120)
+            H.isTrue(changes.diracSlot and changes.lipSync)
+        end,
+    },
+    {
+        name = "a sparse document leaves the six processing fields nil rather than inventing a value",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.sparse())
+            H.equal(s.fields.loudness, nil)
+            H.equal(s.fields.night, nil)
+            H.equal(s.fields.dialogEnhance, nil)
+            H.equal(s.fields.bassEnhance, nil)
+            H.equal(s.fields.diracSlot, nil)
+            H.equal(s.fields.lipSync, nil)
+        end,
+    },
+    {
+        name = "a /cal replace carrying slots re-derives the slot names",
+        fn = function()
+            -- The inputs collection has this test for its own container; the
+            -- slots collection was relying on the code reading correctly.
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.diracSlots[1].name, "Calibrated")
+            local changes = s:applyOps({
+                { op = "replace", path = "/cal", value = {
+                    vpl = -50, vph = 0, currentdiracslot = 2, lipsync = 40,
+                    slots = { { name = "Room A" }, { name = "Room B" }, { name = "" },
+                              { name = "Movie" }, { name = "Music" }, { name = "Custom" } },
+                } },
+            })
+            H.equal(s.diracSlots[1].name, "Room A", "slot names follow a /cal replace")
+            H.equal(s.diracSlots[2].name, "Room B")
+            H.isTrue(changes.diracSlots, "and the change is reported")
+            H.equal(s.fields.diracSlot, 2, "the scalars under /cal re-derive too")
+            H.equal(s.fields.lipSync, 40)
+        end,
+    },
+    {
+        name = "a replace of the slots array alone is accepted",
+        fn = function()
+            -- Permissive inbound parsing. If the unit never pushes at this
+            -- granularity the branch never runs; if it does, the names stay
+            -- live rather than going stale until the next full document.
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/cal/slots", value = {
+                    { name = "First" }, { name = "Second" }, { name = "" },
+                    { name = "Movie" }, { name = "Music" }, { name = "Custom" },
+                } },
+            })
+            H.equal(s.diracSlots[1].name, "First")
+            H.equal(s.diracSlots[2].name, "Second")
+            H.isTrue(changes.diracSlots)
+            H.equal(s.fields.vpl, -50, "nothing else under /cal was disturbed")
+        end,
+    },
+    {
+        name = "Dirac filter slot names project, including an unnamed slot",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.diracSlots[1].name, "Calibrated")
+            H.equal(s.diracSlots[2].name, "Flat")
+            H.equal(s.diracSlots[3].name, "", "an empty name still gets a row")
+            H.equal(s.diracSlots[6].name, "Custom")
+        end,
+    },
+    {
+        name = "an absent slot name (the key itself missing) still gets a row",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.legacy())
+            H.equal(s.diracSlots[1].name, "Slot 1")
+            H.equal(s.diracSlots[2].name, nil, "no name key at all, but the slot still exists")
+            H.isTrue(s.diracSlots[2] ~= nil, "the entry itself must not be dropped")
+        end,
+    },
+    {
+        name = "a sparse document has no dirac slots to report",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.sparse())
+            H.equal(next(s.diracSlots), nil)
+        end,
+    },
+
+    ----------------------------------------------------------------------------
+    -- Macros
+    ----------------------------------------------------------------------------
+    {
+        name = "macro names and their stored operations project from the document",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.macros.cmda.name, "Movie Night")
+            H.count(s.macros.cmda.ops, 2, "both stored operations are kept")
+            H.equal(s.macros.cmda.ops[1].path, "/volume")
+            H.equal(s.macros.cmda.ops[1].value, -22)
+            H.equal(s.macros.cmda.ops[2].path, "/dialogEnh")
+            H.equal(s.macros.cmda.ops[2].value, 5)
+            H.equal(s.macros.cmdcustom1.name, nil, "a slot the owner never named")
+            H.count(s.macros.cmdcustom1.ops, 1, "and still has its operations")
+        end,
+    },
+    {
+        name = "a named but empty macro slot keeps its name and no operations",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.macros.cmdc.name, "Late Night")
+            H.count(s.macros.cmdc.ops, 0, "nothing stored to replay")
+        end,
+    },
+    {
+        name = "a stored entry that is not an operation is dropped on the way in",
+        fn = function()
+            -- A bare string, an entry with no op, and an entry with no path are
+            -- all things a driver must not forward blindly to a live processor.
+            -- A remove carries no value, and this driver only writes values.
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.count(s.macros.cmdd.ops, 1, "only the one well-formed operation survives")
+            H.equal(s.macros.cmdd.ops[1].path, "/night")
+            H.equal(s.macros.cmdd.ops[1].value, "auto")
+        end,
+    },
+    {
+        name = "a stored entry whose kind is not `replace` is dropped on the way in",
+        fn = function()
+            -- The write path sends `replace` and only `replace`, so the stored
+            -- kind is not carried through to the wire. A `test` entry is a GUARD
+            -- ("only proceed if muted") and replaying it as a replace would
+            -- EXECUTE it -- muting the room. An `add` becomes a replace on a
+            -- member the unit does not have, which it rejects wholesale, so one
+            -- `add` would silently fail the entire macro.
+            local s = State.new()
+            s:applyOps({
+                { op = "replace", path = "/svronly/preset2", value = {
+                    { op = "test",    path = "/muted",        value = true },
+                    { op = "add",     path = "/upmix/select", value = "auro" },
+                    { op = "move",    path = "/volume",       value = -30 },
+                    { op = "copy",    path = "/volume",       value = -30 },
+                    { op = "replace", path = "/night",        value = "auto" },
+                } },
+            })
+            H.count(s.macros.preset2.ops, 1, "only the replace may be replayed")
+            H.equal(s.macros.preset2.ops[1].path, "/night")
+            H.equal(s.macros.preset2.ops[1].value, "auto")
+        end,
+    },
+    {
+        name = "the count of stored entries that cannot be replayed is kept with the slot",
+        fn = function()
+            -- Replaying a macro has to be able to say how much of it did not
+            -- run, and only ingest knows what it threw away.
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.macros.cmda.dropped, 0, "everything stored in cmda is replayable")
+            H.equal(s.macros.cmdd.dropped, 4, "four of cmdd's five entries are not")
+
+            s:applyOps({
+                { op = "replace", path = "/svronly/preset2", value = {
+                    { op = "test",    path = "/muted", value = true },
+                    "not an operation at all",
+                    { op = "replace", path = "/night", value = "auto" },
+                } },
+            })
+            H.count(s.macros.preset2.ops, 1)
+            H.equal(s.macros.preset2.dropped, 2)
+        end,
+    },
+    {
+        name = "a slot holding nothing but non-replace entries holds no operations at all",
+        fn = function()
+            local s = State.new()
+            local changes = s:applyOps({
+                { op = "replace", path = "/svronly/preset3", value = {
+                    { op = "test", path = "/muted",             value = true },
+                    { op = "add",  path = "/svronly/cmdcustom9", value = {} },
+                } },
+            })
+            H.count(s.macros.preset3.ops, 0,
+                "nothing replayable is nothing to offer, so the picker leaves the slot out")
+            H.equal(changes.macros, nil, "and the picker has nothing to redraw")
+        end,
+    },
+    {
+        name = "a key under /svronly that is not a macro slot is ignored",
+        fn = function()
+            -- /svronly is the unit's own scratch container and holds more than
+            -- macros; only the fixed slot names are read.
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.macros.lastUsedPage, nil)
+            local slots = 0
+            for _ in pairs(s.macros) do slots = slots + 1 end
+            H.equal(slots, 6, "cmda-cmdd, preset1 and cmdcustom1, and nothing else")
+        end,
+    },
+    {
+        name = "a wholesale /svronly replace re-derives the macros",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/svronly", value = {
+                    macroNames = { cmda = "Evening" },
+                    cmda = { { op = "replace", path = "/volume", value = -18 } },
+                } },
+            })
+            H.isTrue(changes.macros, "the change is reported")
+            H.equal(s.macros.cmda.name, "Evening")
+            H.count(s.macros.cmda.ops, 1)
+            H.equal(s.macros.cmda.ops[1].value, -18)
+            H.equal(s.macros.cmdb.name, "Listening",
+                "a slot the push did not mention keeps what it had")
+            H.count(s.macros.cmdb.ops, 2)
+        end,
+    },
+    {
+        name = "a full document drops a macro the unit no longer stores",
+        fn = function()
+            -- A getmso reply is COMPLETE, so absence in one is authoritative: a
+            -- macro deleted on the unit must stop being runnable from Control4,
+            -- not linger until the driver is reloaded.
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.count(s.macros.cmda.ops, 2)
+
+            local doc = F.modern()
+            doc.svronly.cmda = nil
+            doc.svronly.macroNames.cmda = nil
+            local changes = s:applyDocument(doc)
+            H.isTrue(changes.macros, "the picker loses an entry, so it has to redraw")
+            H.equal(s.macros.cmda, nil, "the deleted slot is gone, not stale")
+            H.count(s.macros.cmdb.ops, 2, "every slot the document still carries is untouched")
+            H.equal(s.macros.cmdb.name, "Listening")
+        end,
+    },
+    {
+        name = "a targeted /svronly push leaves the slots it does not mention alone",
+        fn = function()
+            -- The other half of the rule above: a targeted push is a fragment,
+            -- not a census, so absence in one is UNSPECIFIED -- the same
+            -- distinction _applyContainer already draws for every other
+            -- container it re-derives.
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/svronly", value = {
+                    cmda = { { op = "replace", path = "/volume", value = -18 } },
+                } },
+            })
+            H.equal(changes.macros, nil, "cmda had operations and still has them")
+            H.count(s.macros.cmda.ops, 1)
+            H.equal(s.macros.cmda.ops[1].value, -18)
+            H.count(s.macros.cmdb.ops, 2, "a slot the push did not mention keeps what it had")
+            H.equal(s.macros.preset1.name, "Preset 1")
+            H.count(s.macros.cmdcustom1.ops, 1)
+        end,
+    },
+    {
+        name = "a targeted push replaces one slot's operations, and reports it only when " ..
+               "the slot gained or lost them",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+
+            -- Still non-empty afterwards: the picker shows names, not
+            -- operations, so it has nothing to redraw.
+            local changes = s:applyOps({
+                { op = "replace", path = "/svronly/cmda",
+                  value = { { op = "replace", path = "/volume", value = -12 } } },
+            })
+            H.equal(changes.macros, nil, "an edit that leaves the slot non-empty is not a redraw")
+            H.count(s.macros.cmda.ops, 1)
+            H.equal(s.macros.cmda.ops[1].value, -12)
+
+            -- Emptied: it must leave the list.
+            changes = s:applyOps({ { op = "replace", path = "/svronly/cmda", value = {} } })
+            H.isTrue(changes.macros, "losing its operations changes what the picker shows")
+            H.count(s.macros.cmda.ops, 0)
+
+            -- Filled again.
+            changes = s:applyOps({
+                { op = "replace", path = "/svronly/cmda",
+                  value = { { op = "replace", path = "/volume", value = -20 } } },
+            })
+            H.isTrue(changes.macros, "and so does gaining them back")
+        end,
+    },
+    {
+        name = "a targeted push renames one macro",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/svronly/macroNames/cmda", value = "Evening" },
+            })
+            H.isTrue(changes.macros)
+            H.equal(s.macros.cmda.name, "Evening")
+            H.equal(s.macros.cmdb.name, "Listening", "no other name moved")
+
+            -- The same name again is not a change.
+            changes = s:applyOps({
+                { op = "replace", path = "/svronly/macroNames/cmda", value = "Evening" },
+            })
+            H.equal(changes.macros, nil)
+        end,
+    },
+    {
+        name = "a replace of the whole name map is accepted",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/svronly/macroNames",
+                  value = { cmda = "Evening", cmdcustom1 = "Quiet" } },
+            })
+            H.isTrue(changes.macros)
+            H.equal(s.macros.cmda.name, "Evening")
+            H.equal(s.macros.cmdcustom1.name, "Quiet", "a slot that had no name gains one")
+            H.count(s.macros.cmda.ops, 2, "the operations were not disturbed")
+        end,
+    },
+    {
+        name = "a push about a slot the unit does not have is ignored",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/svronly/cmdcustom17",
+                  value = { { op = "replace", path = "/volume", value = -5 } } },
+                { op = "replace", path = "/svronly/macroNames/nosuchslot", value = "Listening" },
+                { op = "replace", path = "/svronly/lastUsedPage", value = "macros" },
+            })
+            H.equal(changes.macros, nil)
+            H.equal(s.macros.cmdcustom17, nil)
+            H.equal(s.macros.nosuchslot, nil)
+        end,
+    },
+    {
+        name = "a document with no /svronly block reports no macros",
+        fn = function()
+            local s = State.new()
+            s:applyDocument(F.legacy())
+            H.equal(next(s.macros), nil, "absence is tolerated, not invented around")
+            s = State.new()
+            s:applyDocument(F.sparse())
+            H.equal(next(s.macros), nil)
+        end,
+    },
 }

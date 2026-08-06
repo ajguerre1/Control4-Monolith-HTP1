@@ -107,6 +107,14 @@ local VARIABLES = {
     VIDEO_COLORSPACE   = function(state) return text(state.fields.videoColorSpace) end,
     VIDEO_HDR          = function(state) return text(state.fields.videoHdr) end,
     DIRAC_STATE        = function(state) return text(state.fields.diracState) end,
+    -- Control for all six arrives in later M3 tasks; these are read-only
+    -- projections of what the unit already pushes, same as DIRAC_STATE above.
+    LOUDNESS           = function(state) return text(state.fields.loudness) end,
+    NIGHT_MODE         = function(state) return text(state.fields.night) end,
+    DIALOG_ENHANCE     = function(state) return text(state.fields.dialogEnhance) end,
+    BASS_ENHANCE       = function(state) return text(state.fields.bassEnhance) end,
+    DIRAC_SLOT         = function(state) return text(state.fields.diracSlot) end,
+    LIP_SYNC_MS        = function(state) return text(state.fields.lipSync) end,
 }
 
 -- Names as fired by C4:FireEvent. tests/test_manifest.lua asserts this list
@@ -123,6 +131,13 @@ local EVENTS = {
 }
 DRIVER.EVENTS = EVENTS -- for tests; the code below always uses the local.
 
+-- Names only, for the documentation check in tests/test_manifest.lua. Exposing
+-- the VARIABLES table itself would let a test assert the driver against itself;
+-- the names are what the documentation has to keep up with.
+DRIVER.VARIABLE_NAMES = {}
+for name in pairs(VARIABLES) do table.insert(DRIVER.VARIABLE_NAMES, name) end
+table.sort(DRIVER.VARIABLE_NAMES)
+
 local function initVariables()
     DRIVER.varCache, DRIVER.varCreated = {}, {}
     local connected = DRIVER.session and DRIVER.session.connected or false
@@ -135,7 +150,7 @@ local function initVariables()
         --
         -- Isolated because this loop runs under pairs(), whose order is
         -- unspecified: one failure without a pcall would abort it partway and
-        -- leave an arbitrary, reload-varying subset of the seventeen created,
+        -- leave an arbitrary, reload-varying subset of the created variables,
         -- while varCache claimed all of them existed. It would also skip the
         -- Driver Version update below, so a successful install would still
         -- report the old version in Composer.
@@ -203,6 +218,191 @@ local function fireStateEvents(changes)
             C4:FireEvent(EVENTS.SURROUND_MODE_CHANGED)
         end
         DRIVER.prevSurroundMode = now
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Dirac Filter picker
+--------------------------------------------------------------------------------
+
+-- One label per slot, in the order C4:UpdatePropertyList wants: a comma-
+-- separated string, not a table. Labelled by the WIRE index (0-based) rather
+-- than diracSlots' 1-based Lua position, so the number an installer sees here
+-- is the same number DIRAC_SLOT reports and /cal/currentdiracslot uses -- no
+-- translation for anyone comparing the two.
+local function diracFilterEntry(wireIndex, name)
+    if name ~= nil and name ~= "" then
+        return wireIndex .. " - " .. name
+    end
+    return wireIndex .. " - Slot " .. wireIndex
+end
+
+-- Returns the full comma-separated item list and the text of the entry
+-- matching state.fields.diracSlot (nil if the current slot is unknown or out
+-- of range).
+local function diracFilterItems()
+    local items, selectedText = {}, nil
+    local selectedSlot = DRIVER.state.fields.diracSlot
+    for i, entry in ipairs(DRIVER.state.diracSlots) do
+        local wireIndex = i - 1
+        local text = diracFilterEntry(wireIndex, entry.name)
+        table.insert(items, text)
+        if selectedSlot == wireIndex then selectedText = text end
+    end
+    return items, selectedText
+end
+
+-- Repopulates the whole list rather than editing one entry: UpdatePropertyList
+-- always wants the complete set, so "a name changed" and "the selection
+-- changed" are the same call. Called from onChanges below whenever
+-- changes.diracSlots or changes.diracSlot fires -- which includes the first
+-- document, since both start out empty/nil.
+local function updateDiracFilterProperty()
+    local items, selectedText = diracFilterItems()
+    if #items == 0 then return end -- nothing reported yet; leave the property alone
+    C4:UpdatePropertyList("Dirac Filter", table.concat(items, ","), selectedText or "")
+end
+
+--------------------------------------------------------------------------------
+-- Macros
+--------------------------------------------------------------------------------
+
+-- The unit stores macros in fixed slots and this driver only ever REPLAYS them.
+-- There is no "run macro" verb on the wire: a macro is an array of JSON-patch
+-- operations the owner saved on the unit, and running one means sending those
+-- operations back as a changemso -- exactly what the unit's own web client
+-- does. Nothing here can create, edit, rename or delete a macro; the unit's own
+-- UI owns all of that.
+
+-- What one slot reads as in Composer's list: the unit's own name for it,
+-- falling back to the slot key when the owner never named it.
+--
+-- Commas are replaced because C4:UpdatePropertyList takes the whole list as one
+-- COMMA-SEPARATED STRING -- a macro whose name contains a comma would otherwise
+-- arrive in Composer as two entries, neither of them selectable. The
+-- substitution is display-only: runMacro still accepts the unit's real name,
+-- commas and all.
+local function macroEntryText(slot, name)
+    if name == nil or name == "" then return slot end
+    return (name:gsub(",", " "))
+end
+
+-- Only slots that actually hold operations. A slot the owner named but left
+-- empty is deliberately absent: it would look like a control and do nothing.
+local function macroItems()
+    local items = {}
+    for _, slot in ipairs(State.MACRO_SLOTS) do
+        local entry = DRIVER.state.macros[slot]
+        if entry and #entry.ops > 0 then
+            table.insert(items, macroEntryText(slot, entry.name))
+        end
+    end
+    return items
+end
+
+-- Repopulates the whole list, like the Dirac picker above. The current
+-- selection is KEPT where it still exists, so a rename on the unit -- or a new
+-- macro appearing -- does not silently move the selection out from under the
+-- Run Selected Macro action. Where the old selection is gone, or there never
+-- was one, the first entry is chosen so the action always has something
+-- determinate to run.
+--
+-- No feedback loop to guard against here, unlike the Dirac picker: selecting a
+-- macro selects it and nothing more. Running one is an explicit action, so
+-- Composer echoing this call back as a property change cannot reach the unit.
+local function updateMacroProperty()
+    local items = macroItems()
+    if #items == 0 then return end -- no macros stored; leave the property alone
+    local selected = Properties["Macro"]
+    local kept
+    for _, item in ipairs(items) do
+        if item == selected then kept = item end
+    end
+    C4:UpdatePropertyList("Macro", table.concat(items, ","), kept or items[1])
+end
+
+-- For the Run Macro COMMAND, where a programmer typed the request: accepts the
+-- unit's own name for a macro, the text shown in the list, or the slot key. A
+-- name is the likely case; a slot key is the unambiguous one, so it wins where
+-- the two could collide -- an owner may name a macro "cmdcustom1", and someone
+-- typing that string into programming means the slot. Two macros sharing one
+-- name resolve to the earlier slot -- arbitrary, but deterministic.
+local function resolveMacroSlot(request)
+    if type(request) ~= "string" or request == "" then return nil end
+    local byKey, byName, byText
+    for _, slot in ipairs(State.MACRO_SLOTS) do
+        local entry = DRIVER.state.macros[slot]
+        if entry then
+            if not byKey and slot == request then byKey = slot end
+            if not byName and entry.name == request then byName = slot end
+            if not byText and macroEntryText(slot, entry.name) == request then byText = slot end
+        end
+    end
+    return byKey or byName or byText
+end
+
+-- For the Run Selected Macro ACTION, which has something different in hand: not
+-- a typed request but the DISPLAY TEXT of an entry this driver itself put in
+-- the list. For that, text is authoritative by construction -- it is the only
+-- thing Composer can hand back -- so matching anything else can only pick a
+-- different macro than the one shown. Same slot order and same first-match rule
+-- as macroItems(), so the Nth entry in the list resolves to the Nth listed slot.
+local function resolveMacroByListedText(text)
+    if type(text) ~= "string" or text == "" then return nil end
+    for _, slot in ipairs(State.MACRO_SLOTS) do
+        local entry = DRIVER.state.macros[slot]
+        if entry and #entry.ops > 0 and macroEntryText(slot, entry.name) == text then
+            return slot
+        end
+    end
+    return nil
+end
+
+-- REPLAYS THE OWNER'S OWN STORED INTENT, and that is worth saying out loud:
+-- this is the one place the driver sends paths it did not choose. A macro can
+-- touch anything the unit's own web client can, and second-guessing which of
+-- those paths are allowed would break the owner's own macro for no benefit --
+-- the unit remains the authority on what it will accept. What the driver will
+-- not do is forward an entry it cannot replay -- htp1/state.lua keeps only
+-- `replace` on the way in, because that is the only kind this write path can
+-- send -- or send an empty changemso, which this codec would encode as {}
+-- rather than [] and the unit would reject outright. Skipping is not silent:
+-- how many entries a slot lost is counted at ingest and reported below.
+--
+-- Session:write is the right tool, and no batch call is needed: writes queue by
+-- path and flush together 50 ms later, so every path a macro touches goes out
+-- in ONE changemso, and a macro touching one path twice sends only the later
+-- value -- sending both would be a write the second immediately overwrites.
+local function runMacro(request, label, resolve)
+    local slot = (resolve or resolveMacroSlot)(request)
+    if not slot then
+        DRIVER.log:debug(label .. ": no macro named", tostring(request))
+        return
+    end
+    local entry = DRIVER.state.macros[slot]
+    local ops, dropped = entry.ops, entry.dropped or 0
+
+    -- DELIBERATELY NOT behind Debug Mode, unlike every other line in here. The
+    -- shipping default is Off, and a macro that ran in part is precisely what an
+    -- owner cannot notice on their own: one button, and some of what they saved.
+    -- `error` is this logger's only always-written level, so it is the one an
+    -- installer actually sees -- no new level invented for one message. The slot
+    -- key is a fixed name of the unit's own; the macro's NAME is site data and
+    -- stays out of a log that leaves this machine.
+    if dropped > 0 then
+        DRIVER.log:error(label .. ": macro " .. slot .. " ran " .. #ops .. " of " ..
+            (#ops + dropped) .. " stored entries -- the rest are entries this driver " ..
+            "cannot replay. Only `replace` operations are sent: the write path sends " ..
+            "values, so it cannot express a delete.")
+    end
+
+    if #ops == 0 then
+        DRIVER.log:debug(label .. ": macro", slot, "has no stored operations to replay")
+        return
+    end
+    DRIVER.log:debug(label .. ": replaying", #ops, "stored operation(s) from", slot)
+    for _, op in ipairs(ops) do
+        DRIVER.session:write(op.path, op.value)
     end
 end
 
@@ -322,6 +522,21 @@ function DRIVER.onChanges(changes)
         updateVariables(DRIVER.session.connected)
         fireStateEvents(changes)
     end)
+
+    -- Its own guard, behind the same reasoning as the variables block above: a
+    -- fault repopulating the Composer property must not be able to take the
+    -- proxy or the variables down with it.
+    guard("dirac filter property", function()
+        if changes.diracSlots or changes.diracSlot then
+            updateDiracFilterProperty()
+        end
+    end)
+
+    -- Its own guard again, and not folded into the block above: two independent
+    -- lists, and a fault repopulating one must not be able to stop the other.
+    guard("macro property", function()
+        if changes.macros then updateMacroProperty() end
+    end)
 end
 
 function OnDriverInit()
@@ -356,6 +571,29 @@ local PROPERTY_HANDLERS = {
     end,
     ["Volume Ramp Rate"] = function(value) DRIVER.proxy:setRampMs(parseRampMs(value)) end,
     ["Power Off Action"] = function(value) DRIVER.proxy:setPowerOffAction(value) end,
+    -- Composer delivers the selected entry's full text, "<wire index> - <name>",
+    -- not a bare number -- parse the LEADING DIGITS with a pattern, not a single
+    -- character: a one-character parse silently breaks from slot 10 up, and
+    -- while this unit only has six slots today, that bug is not worth carrying
+    -- into whichever driver copies this shape next.
+    ["Dirac Filter"] = function(value)
+        local slot = tonumber((value or ""):match("^(%d+)"))
+        if not slot then
+            DRIVER.log:debug("Dirac Filter: could not parse a slot index from", tostring(value))
+            return
+        end
+        if DRIVER.state.fields.diracSlot == slot then
+            -- GUARDS THE FEEDBACK LOOP. This handler cannot tell an installer's
+            -- own selection apart from Composer echoing back the driver's own
+            -- updateDiracFilterProperty() call (the unit's push repopulating
+            -- the list is exactly that call) -- both arrive here the same way.
+            -- What distinguishes a real request is that it asks for a slot
+            -- other than the one the unit already reports. Same shape as the
+            -- volume "already there" guard in htp1/proxy.lua's _setVolumeDb.
+            return
+        end
+        DRIVER.session:write("/cal/currentdiracslot", slot)
+    end,
 }
 
 function OnPropertyChanged(name)
@@ -367,6 +605,13 @@ end
 
 local ACTIONS = {
     REFRESH_FROM_DEVICE = function() DRIVER.session:refresh() end,
+    -- Runs whatever the Macro property currently shows. Reading the property
+    -- here rather than caching a selection keeps one source of truth: Composer
+    -- owns what the installer chose. Resolved BY THAT TEXT, because the text is
+    -- all this action has and all Composer can give it.
+    RUN_SELECTED_MACRO = function()
+        runMacro(Properties["Macro"], "Run Selected Macro", resolveMacroByListedText)
+    end,
     PRINT_STATE = function()
         print("HTP-1 state:")
         for key, value in pairs(DRIVER.state.fields) do
@@ -413,13 +658,129 @@ local ACTIONS = {
     end,
 }
 
+--------------------------------------------------------------------------------
+-- Programming commands
+--------------------------------------------------------------------------------
+
+-- Declared in <commands>. Unlike the Actions tab, Composer delivers one of
+-- these with the command's own declared name as `command` -- never
+-- "LUA_ACTION" -- and parameters keyed by each <param><name>. Every
+-- parameter arrives as a string, so every numeric one goes through tonumber,
+-- and every LIST one is checked against its declared domain: the unit is the
+-- ultimate authority on a value, but nonsense earns a log line here rather
+-- than a write.
+local DIRAC_MODES = { Off = "off", On = "on", Bypass = "bypass" }
+local NIGHT_MODES = { Off = "off", Auto = "auto", On = "on" }
+local ONOFF_MODES = { Off = "off", On = "on" }
+
+local PROGRAMMING_COMMANDS = {}
+
+-- Named "Set Dirac Processing" rather than "Set Dirac" because "Set Dirac Slot"
+-- exists too: one turns Dirac on, off or into bypass, the other picks which
+-- calibrated filter it runs. A name that is a strict prefix of another names
+-- nothing in a programming dropdown -- and both commands are new in this
+-- release, so this is the last moment the rename costs an installed program
+-- nothing.
+PROGRAMMING_COMMANDS["Set Dirac Processing"] = function(params)
+    local value = DIRAC_MODES[params.Mode]
+    if not value then
+        DRIVER.log:debug("Set Dirac Processing: unrecognised Mode", tostring(params.Mode))
+        return
+    end
+    DRIVER.session:write("/cal/diracactive", value)
+end
+
+PROGRAMMING_COMMANDS["Set Night Mode"] = function(params)
+    local value = NIGHT_MODES[params.Mode]
+    if not value then
+        DRIVER.log:debug("Set Night Mode: unrecognised Mode", tostring(params.Mode))
+        return
+    end
+    DRIVER.session:write("/night", value)
+end
+
+PROGRAMMING_COMMANDS["Set Dialog Enhance"] = function(params)
+    local level = tonumber(params.Level)
+    if not level or level < 0 or level > 6 then
+        DRIVER.log:debug("Set Dialog Enhance: Level out of range 0-6:", tostring(params.Level))
+        return
+    end
+    DRIVER.session:write("/dialogEnh", level)
+end
+
+PROGRAMMING_COMMANDS["Set Bass Enhance"] = function(params)
+    local value = ONOFF_MODES[params.Mode]
+    if not value then
+        DRIVER.log:debug("Set Bass Enhance: unrecognised Mode", tostring(params.Mode))
+        return
+    end
+    DRIVER.session:write("/bassenhance", value)
+end
+
+PROGRAMMING_COMMANDS["Toggle Bass Enhance"] = function()
+    local next = (DRIVER.state.fields.bassEnhance == "on") and "off" or "on"
+    DRIVER.session:write("/bassenhance", next)
+end
+
+PROGRAMMING_COMMANDS["Set Lip Sync Delay"] = function(params)
+    local delay = tonumber(params.Delay)
+    if not delay or delay < 0 or delay > 340 then
+        DRIVER.log:debug("Set Lip Sync Delay: Delay out of range 0-340:", tostring(params.Delay))
+        return
+    end
+    DRIVER.session:write("/cal/lipsync", delay)
+    -- The vendor's own web client writes the calibration value and the
+    -- currently selected input's own delay together; writing only the first
+    -- would leave the driver disagreeing with the unit's own display for that
+    -- input. Skipped when no input is known yet, rather than building a path
+    -- with a nil key.
+    local input = DRIVER.state.fields.input
+    if input ~= nil then
+        DRIVER.session:write("/inputs/" .. input .. "/delay", delay)
+    end
+end
+
+-- For programming that wants a slot by number. No already-there guard here,
+-- unlike the "Dirac Filter" property handler above: a programming command is
+-- always an explicit ask, never Composer echoing the driver's own write back,
+-- so it writes unconditionally -- the same convention every other command in
+-- this table already follows.
+PROGRAMMING_COMMANDS["Set Dirac Slot"] = function(params)
+    local slot = tonumber(params.Slot)
+    if not slot or slot < 0 or slot > 5 then
+        DRIVER.log:debug("Set Dirac Slot: Slot out of range 0-5:", tostring(params.Slot))
+        return
+    end
+    DRIVER.session:write("/cal/currentdiracslot", slot)
+end
+
+-- A STRING parameter, not a LIST: the macros a unit holds are its own, and a
+-- fixed list declared in driver.xml could only be wrong. The name the owner
+-- gave the macro is the likely thing to type; the slot key (cmda, preset1,
+-- cmdcustom3) is accepted too, for programming that wants to name a macro
+-- without depending on what it is currently called.
+PROGRAMMING_COMMANDS["Run Macro"] = function(params)
+    runMacro(params.Macro, "Run Macro")
+end
+
+-- Names only, for the manifest test's coverage check -- same pattern as
+-- DRIVER.VARIABLE_NAMES above.
+DRIVER.PROGRAMMING_COMMAND_NAMES = {}
+for name in pairs(PROGRAMMING_COMMANDS) do
+    table.insert(DRIVER.PROGRAMMING_COMMAND_NAMES, name)
+end
+table.sort(DRIVER.PROGRAMMING_COMMAND_NAMES)
+
 -- Composer's Actions tab does NOT send an action's <command> as the command.
 -- It sends the literal "LUA_ACTION", with the declared name in tParams.ACTION.
 -- Dispatching on the command alone matched nothing and returned in silence, so
 -- every action in this driver did nothing at all and said nothing about it.
 --
--- The direct form is still accepted: it costs one lookup and is how a
--- programming command would arrive if this driver ever declares one.
+-- A programming command declared in <commands> arrives the other way: the
+-- command IS the declared name, spaces and all, never wrapped in LUA_ACTION.
+-- Both forms are tried here, plus a space-stripped variant of the name as a
+-- defensive fallback some shipped drivers also rely on -- it costs one more
+-- table lookup.
 function ExecuteCommand(command, params)
     guard("ExecuteCommand(" .. tostring(command) .. ")", function()
         params = params or {}
@@ -427,9 +788,14 @@ function ExecuteCommand(command, params)
         local name = command
         if command == "LUA_ACTION" then name = params.ACTION end
 
-        local action = ACTIONS[name]
-        if action then
-            action(params)
+        local handler = ACTIONS[name] or PROGRAMMING_COMMANDS[name]
+        if not handler and type(name) == "string" then
+            local stripped = name:gsub(" ", "")
+            handler = ACTIONS[stripped] or PROGRAMMING_COMMANDS[stripped]
+        end
+
+        if handler then
+            handler(params)
             return
         end
 

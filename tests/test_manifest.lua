@@ -39,10 +39,25 @@ local function parseEvents(xml)
     return events
 end
 
+-- Returns an array of every declared <command>'s <name>, in document order.
+-- Scoped to the <commands> wrapper deliberately: <action> also has a child
+-- element literally named <command> (its dispatch token, e.g.
+-- REFRESH_FROM_DEVICE), and an unscoped <command>(.-)</command> match picks
+-- those up too -- with no <name> of their own to find inside them.
+local function parseCommands(xml)
+    local names = {}
+    local wrapper = xml:match("<commands>(.-)</commands>") or ""
+    for block in wrapper:gmatch("<command>(.-)</command>") do
+        local name = block:match("<name>%s*(.-)%s*</name>")
+        if name then table.insert(names, name) end
+    end
+    return names
+end
+
 -- driver.lua's DRIVER.EVENTS table is assigned at file scope (not inside
 -- buildDriver), and none of its requires touch the C4 API at load time, so a
 -- bare dofile is enough to read it back -- no mock, no OnDriverInit needed.
-local function loadEventNames()
+local function loadDriverFile()
     for _, name in ipairs({ "DRIVER", "OnDriverInit", "OnDriverLateInit", "OnDriverDestroyed",
                              "OnPropertyChanged", "ExecuteCommand", "ReceivedFromProxy",
                              "OnConnectionStatusChanged", "OnBindingChanged",
@@ -50,6 +65,15 @@ local function loadEventNames()
         _G[name] = nil
     end
     dofile("driver.lua")
+end
+
+local function loadVariableNames()
+    loadDriverFile()
+    return DRIVER.VARIABLE_NAMES
+end
+
+local function loadEventNames()
+    loadDriverFile()
     local names = {}
     for _, name in pairs(DRIVER.EVENTS) do names[name] = true end
     return names
@@ -92,6 +116,97 @@ return {
                 H.isTrue(items:find("<item>" .. choice .. "</item>", 1, true) ~= nil,
                     "missing choice: " .. choice)
             end
+        end,
+    },
+    {
+        name = "the declared documentation file exists and is packaged",
+        fn = function()
+            local xml = readManifest()
+            local file = xml:match('<documentation%s+file%s*=%s*"([^"]+)"')
+            H.isTrue(file ~= nil, "driver.xml should declare a documentation file")
+
+            -- A declared file that is not on disk gives Composer an empty tab
+            -- with no error, and nothing else here would notice.
+            local handle = io.open(file, "r")
+            H.isTrue(handle ~= nil, "declared but missing on disk: " .. tostring(file))
+            local body = handle:read("*a")
+            handle:close()
+            H.isTrue(#body > 2000, "the documentation looks like a stub: " .. #body .. " bytes")
+
+            -- Self-contained on purpose: the first-party drivers render Markdown
+            -- through a 1.1 MB React bundle, which would mean a build pipeline
+            -- and two copies of the content free to drift apart.
+            H.equal(body:find("<script", 1, true), nil,
+                "the documentation should need no scripting to render")
+
+            -- The build packs an explicit list; a file missing from it ships a
+            -- driver whose Documentation tab is blank.
+            local script = assert(io.open("tools/build-c4z.ps1", "r"))
+            local payload = script:read("*a")
+            script:close()
+            H.isTrue(payload:find(file, 1, true) ~= nil,
+                file .. " is declared but not in the build payload")
+        end,
+    },
+    {
+        name = "the documentation names every property, action, command, variable and event",
+        fn = function()
+            -- Documentation that silently falls behind the driver is worse than
+            -- none: it is confidently wrong. This does not check the prose, only
+            -- that nothing user-facing was added without being written up.
+            local xml = readManifest()
+            local file = xml:match('<documentation%s+file%s*=%s*"([^"]+)"')
+            local handle = assert(io.open(file, "r"))
+            local doc = handle:read("*a")
+            handle:close()
+
+            -- Each name must have ITS OWN documented entry -- the leading cell
+            -- of a row in one of the tables above -- not merely appear
+            -- somewhere in the prose. A substring match let the `Macro`
+            -- property be satisfied by the unrelated words "Run Macro", so the
+            -- property could go entirely undocumented with this test green.
+            local missing = {}
+            local function require_(name, kind)
+                if not doc:find('<td class="name">' .. name .. "</td>", 1, true) then
+                    table.insert(missing, kind .. " " .. name)
+                end
+            end
+
+            for block in xml:gmatch("<property>(.-)</property>") do
+                require_(block:match("<name>%s*(.-)%s*</name>"), "property")
+            end
+            for block in xml:gmatch("<action>(.-)</action>") do
+                require_(block:match("<name>%s*(.-)%s*</name>"), "action")
+            end
+            for _, name in ipairs(parseCommands(xml)) do require_(name, "command") end
+            for block in xml:gmatch("<event>(.-)</event>") do
+                require_(block:match("<name>%s*(.-)%s*</name>"), "event")
+            end
+            for name in pairs(loadEventNames()) do require_(name, "fired event") end
+            for _, name in ipairs(loadVariableNames()) do require_(name, "variable") end
+
+            H.equal(#missing, 0, "undocumented: " .. table.concat(missing, ", "))
+        end,
+    },
+    {
+        name = "the documentation does not promise that a macro always runs in full",
+        fn = function()
+            -- Both retired claims were true only of the empty and unknown cases
+            -- they were written for. A slot storing an entry this driver cannot
+            -- replay DOES under-run, and the Documentation tab is the one place
+            -- an installer looks before believing otherwise.
+            local xml = readManifest()
+            local file = xml:match('<documentation%s+file%s*=%s*"([^"]+)"')
+            local handle = assert(io.open(file, "r"))
+            local doc = handle:read("*a")
+            handle:close()
+
+            H.equal(doc:find("sends it as it stands", 1, true), nil,
+                "the driver sends the replayable entries, not the slot as it stands")
+            H.equal(doc:find("never a half-run macro", 1, true), nil,
+                "an unqualified promise this driver cannot keep")
+            H.isTrue(doc:find("<code>replace</code>", 1, true) ~= nil,
+                "the one entry kind that is replayed should be named outright")
         end,
     },
     {
@@ -212,10 +327,57 @@ return {
             for _, name in ipairs({ "Driver Version", "System Software Version",
                                     "AV Controller Version", "Serial Number", "Model",
                                     "Connection Status", "Maximum Volume", "Volume Ramp Rate",
-                                    "Power Off Action", "Debug Mode" }) do
+                                    "Power Off Action", "Debug Mode", "Dirac Filter",
+                                    "Macro" }) do
                 H.isTrue(xml:find("<name>" .. name .. "</name>", 1, true) ~= nil,
                     "missing property: " .. name)
             end
+        end,
+    },
+    {
+        name = "the runtime-populated pickers are DYNAMIC_LISTs with no fixed items",
+        fn = function()
+            -- Both are populated at runtime via C4:UpdatePropertyList, from
+            -- what the unit itself reports -- its Dirac slot names and its
+            -- stored macros -- never from a list declared here.
+            local xml = readManifest()
+            for _, name in ipairs({ "Dirac Filter", "Macro" }) do
+                local block = xml:match("<property>%s*<name>" .. name .. "</name>(.-)</property>")
+                H.isTrue(block ~= nil, "the " .. name .. " property should be declared")
+                H.isTrue(block:find("<type>DYNAMIC_LIST</type>", 1, true) ~= nil,
+                    name .. " should be a DYNAMIC_LIST")
+                H.isTrue(block:find("<readonly>false</readonly>", 1, true) ~= nil,
+                    name .. " should be settable")
+                H.isTrue(block:find("<items>", 1, true) == nil,
+                    "a DYNAMIC_LIST declares no fixed <items>: " .. name)
+            end
+        end,
+    },
+    {
+        name = "the Run Selected Macro action carries its dispatch token in the same block",
+        fn = function()
+            -- Composer's Actions tab sends the literal "LUA_ACTION" with this
+            -- <command> in tParams.ACTION, so the pairing is what matters.
+            -- Grepping the whole manifest for the two strings separately does
+            -- not check the pairing at all: it stays green with the name in one
+            -- <action> and the token in another, which is a shape that runs the
+            -- WRONG action rather than none. Read the block, then read the
+            -- token out of it.
+            --
+            -- That the token then reaches a handler is proven end to end, the
+            -- way Composer actually invokes it, by "every action declared in
+            -- driver.xml runs when Composer invokes it" in tests/test_driver.lua.
+            -- Not duplicated here.
+            local xml = readManifest()
+            local block
+            for candidate in xml:gmatch("<action>(.-)</action>") do
+                if candidate:match("<name>%s*(.-)%s*</name>") == "Run Selected Macro" then
+                    block = candidate
+                end
+            end
+            H.isTrue(block ~= nil, "the action should be declared")
+            H.equal(block:match("<command>%s*(.-)%s*</command>"), "RUN_SELECTED_MACRO",
+                "the dispatch token driver.lua's ACTIONS table keys on, in this action's block")
         end,
     },
     {
@@ -271,6 +433,99 @@ return {
                 "the replacement action should be declared")
             H.isTrue(xml:find("<command>PRINT_INPUT_LABELS</command>", 1, true) ~= nil,
                 "the replacement command should be declared")
+        end,
+    },
+    {
+        name = "loudness is a discrete and toggle control now that the proxy handles it",
+        fn = function()
+            local xml = readManifest()
+            H.isTrue(xml:find("<has_discrete_loudness_control>True</has_discrete_loudness_control>",
+                1, true) ~= nil, "has_discrete_loudness_control should be True")
+            H.isTrue(xml:find("<has_toggle_loudness_control>True</has_toggle_loudness_control>",
+                1, true) ~= nil, "has_toggle_loudness_control should be True")
+        end,
+    },
+    {
+        name = "the eight processing commands are declared with the right names and param shapes",
+        fn = function()
+            local xml = readManifest()
+            local names = parseCommands(xml)
+            -- "Set Dirac Processing", not "Set Dirac": it sits beside "Set Dirac
+            -- Slot" in a programming dropdown, and one name being a strict
+            -- prefix of the other made the wrong pick invisible.
+            local expected = { "Set Dirac Processing", "Set Night Mode", "Set Dialog Enhance",
+                                "Set Bass Enhance", "Toggle Bass Enhance", "Set Lip Sync Delay",
+                                "Set Dirac Slot", "Run Macro" }
+            H.equal(#names, #expected, "expected exactly the eight declared commands")
+            for _, name in ipairs(expected) do
+                local found = false
+                for _, actual in ipairs(names) do if actual == name then found = true end end
+                H.isTrue(found, "no <command> named " .. name)
+            end
+
+            local function commandBlock(name)
+                return xml:match("<command>%s*<name>" .. name:gsub("([%-%.%:])", "%%%1") ..
+                    "</name>(.-)</command>")
+            end
+
+            local function listItems(block)
+                local items, itemBlock = {}, block:match("<items>(.-)</items>")
+                if not itemBlock then return items end
+                for item in itemBlock:gmatch("<item>%s*(.-)%s*</item>") do
+                    table.insert(items, item)
+                end
+                return items
+            end
+
+            local diracBlock = assert(commandBlock("Set Dirac Processing"))
+            H.isTrue(diracBlock:find("<name>Mode</name>", 1, true) ~= nil)
+            H.isTrue(diracBlock:find("<type>LIST</type>", 1, true) ~= nil)
+            local diracItems = listItems(diracBlock)
+            H.equal(#diracItems, 3)
+            for i, item in ipairs({ "Off", "On", "Bypass" }) do
+                H.equal(diracItems[i], item, "Set Dirac Processing item " .. i)
+            end
+
+            local nightBlock = assert(commandBlock("Set Night Mode"))
+            local nightItems = listItems(nightBlock)
+            for i, item in ipairs({ "Off", "Auto", "On" }) do
+                H.equal(nightItems[i], item, "Set Night Mode item " .. i)
+            end
+
+            local dialogBlock = assert(commandBlock("Set Dialog Enhance"))
+            H.isTrue(dialogBlock:find("<name>Level</name>", 1, true) ~= nil)
+            H.isTrue(dialogBlock:find("<type>RANGED_INTEGER</type>", 1, true) ~= nil)
+            H.isTrue(dialogBlock:find("<minimum>0</minimum>", 1, true) ~= nil)
+            H.isTrue(dialogBlock:find("<maximum>6</maximum>", 1, true) ~= nil)
+
+            local bassBlock = assert(commandBlock("Set Bass Enhance"))
+            local bassItems = listItems(bassBlock)
+            for i, item in ipairs({ "Off", "On" }) do
+                H.equal(bassItems[i], item, "Set Bass Enhance item " .. i)
+            end
+
+            local toggleBassBlock = assert(commandBlock("Toggle Bass Enhance"))
+            H.isTrue(toggleBassBlock:find("<param>", 1, true) == nil,
+                "Toggle Bass Enhance takes no parameters")
+
+            local lipSyncBlock = assert(commandBlock("Set Lip Sync Delay"))
+            H.isTrue(lipSyncBlock:find("<name>Delay</name>", 1, true) ~= nil)
+            H.isTrue(lipSyncBlock:find("<type>RANGED_INTEGER</type>", 1, true) ~= nil)
+            H.isTrue(lipSyncBlock:find("<minimum>0</minimum>", 1, true) ~= nil)
+            H.isTrue(lipSyncBlock:find("<maximum>340</maximum>", 1, true) ~= nil)
+
+            local diracSlotBlock = assert(commandBlock("Set Dirac Slot"))
+            H.isTrue(diracSlotBlock:find("<name>Slot</name>", 1, true) ~= nil)
+            H.isTrue(diracSlotBlock:find("<type>RANGED_INTEGER</type>", 1, true) ~= nil)
+            H.isTrue(diracSlotBlock:find("<minimum>0</minimum>", 1, true) ~= nil)
+            H.isTrue(diracSlotBlock:find("<maximum>5</maximum>", 1, true) ~= nil)
+
+            -- A STRING, not a LIST: the macros belong to the unit, so any fixed
+            -- list declared in the manifest could only be wrong.
+            local runMacroBlock = assert(commandBlock("Run Macro"))
+            H.isTrue(runMacroBlock:find("<name>Macro</name>", 1, true) ~= nil)
+            H.isTrue(runMacroBlock:find("<type>STRING</type>", 1, true) ~= nil)
+            H.equal(#listItems(runMacroBlock), 0, "no fixed list of macro names")
         end,
     },
     {

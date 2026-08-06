@@ -6,6 +6,7 @@ local H = require("tests.harness")
 local mock = H.mock
 local Mapping = require("htp1.mapping")
 local JSON = require("module.json")
+local Frame = require("htp1.frame")
 
 local DEFAULTS = {
     ["Driver Version"] = "", ["Model"] = "HTP-1",
@@ -14,6 +15,9 @@ local DEFAULTS = {
     ["Maximum Volume"] = "Unit maximum", ["Volume Ramp Rate"] = "100 ms",
     ["Power Off Action"] = "Standby",
     ["Debug Mode"] = "Off",
+    -- Both DYNAMIC_LISTs start empty, as Composer has them before the driver
+    -- has read anything from the unit.
+    ["Dirac Filter"] = "", ["Macro"] = "",
 }
 
 local function loadDriver(overrides, bindingAddress)
@@ -73,6 +77,7 @@ local VARIABLE_NAMES = {
     "MUTED", "SURROUND_MODE", "INPUT_FORMAT", "INPUT_PROGRAM", "INPUT_SAMPLE_RATE",
     "OUTPUT_FORMAT", "OUTPUT_SAMPLE_RATE", "VIDEO_RESOLUTION", "VIDEO_COLORSPACE",
     "VIDEO_HDR", "DIRAC_STATE",
+    "LOUDNESS", "NIGHT_MODE", "DIALOG_ENHANCE", "BASS_ENHANCE", "DIRAC_SLOT", "LIP_SYNC_MS",
 }
 
 local function callsNamed(name)
@@ -81,6 +86,80 @@ local function callsNamed(name)
         if c.name == name then table.insert(found, c) end
     end
     return found
+end
+
+-- True when the driver printed a line containing `text`. Debug logging is off
+-- by default, so a test asserting a refusal was explained loads the driver with
+-- Debug Mode on.
+local function loggedContaining(text)
+    for _, line in ipairs(mock.printed) do
+        if line:find(text, 1, true) then return true end
+    end
+    return false
+end
+
+-- The most recent C4:UpdatePropertyList for ONE property, or nil. Filtered by
+-- property name deliberately: the driver populates more than one DYNAMIC_LIST,
+-- so "the last UpdatePropertyList call" is not necessarily the list under test.
+local function lastPropertyList(name)
+    for i = #mock.calls, 1, -1 do
+        local c = mock.calls[i]
+        if c.name == "UpdatePropertyList" and c.args[1] == name then return c end
+    end
+    return nil
+end
+
+-- Decodes one masked client frame (the driver always sends masked, unfragmented
+-- text frames). Handles all three RFC 6455 length encodings, unlike a fixed
+-- 6-byte-header assumption, because a two-path changemso (lip sync) is long
+-- enough to need the 16-bit extended length form.
+local function decodeFrame(raw)
+    local secondByte = raw:byte(2)
+    local masked = secondByte >= 128
+    local len = secondByte % 128
+    local offset = 3
+    if len == 126 then
+        len = raw:byte(3) * 256 + raw:byte(4)
+        offset = 5
+    elseif len == 127 then
+        error("64-bit frame length not expected in these tests")
+    end
+    local maskKey
+    if masked then
+        maskKey = raw:sub(offset, offset + 3)
+        offset = offset + 4
+    end
+    local payload = raw:sub(offset, offset + len - 1)
+    if masked then payload = Frame.applyMask(payload, maskKey) end
+    return payload
+end
+
+-- How many changemso messages the driver sent since the last mock.clearCalls().
+-- A macro touching several paths must be ONE message, not one per path.
+local function changeMsoCount()
+    local count = 0
+    for _, raw in ipairs(mock.sent) do
+        if #raw > 2 then
+            local ok, body = pcall(decodeFrame, raw)
+            if ok and body:sub(1, 10) == "changemso " then count = count + 1 end
+        end
+    end
+    return count
+end
+
+-- The operations in the most recent changemso the driver actually sent, or
+-- nil if none was sent since the last mock.clearCalls().
+local function lastWrittenOps()
+    for i = #mock.sent, 1, -1 do
+        local raw = mock.sent[i]
+        if #raw > 2 then
+            local ok, body = pcall(decodeFrame, raw)
+            if ok and body:sub(1, 10) == "changemso " then
+                return JSON:decode(body:sub(11))
+            end
+        end
+    end
+    return nil
 end
 
 return {
@@ -426,7 +505,7 @@ return {
     -- Variables
     --------------------------------------------------------------------------
     {
-        name = "every one of the seventeen variables exists after init, created as STRING",
+        name = "every one of the twenty-three variables exists after init, created as STRING",
         fn = function()
             loadDriver()
             local created = {}
@@ -442,7 +521,7 @@ return {
                 -- could read wrong indefinitely.
                 H.equal(mock.variableReadOnly[name], true, name .. " should be read-only")
             end
-            H.equal(#VARIABLE_NAMES, 17, "the brief calls for seventeen variables")
+            H.equal(#VARIABLE_NAMES, 23, "the brief calls for twenty-three variables")
 
             -- The reverse direction: an eighteenth variable added to driver.lua
             -- would otherwise ship with nothing asserting it exists at all.
@@ -482,6 +561,12 @@ return {
                 VIDEO_COLORSPACE = "BT2020",
                 VIDEO_HDR = "HDR10",
                 DIRAC_STATE = "on",
+                LOUDNESS = "off",
+                NIGHT_MODE = "off",
+                DIALOG_ENHANCE = "3",
+                BASS_ENHANCE = "off",
+                DIRAC_SLOT = "0",
+                LIP_SYNC_MS = "20",
             }
             for name, value in pairs(expected) do
                 H.equal(mock.variables[name], value, name)
@@ -532,6 +617,38 @@ return {
         end,
     },
     {
+        name = "a targeted push on one processing field updates only that variable",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            pushUpdate("/dialogEnh", 5)
+            local writes = callsNamed("SetVariable")
+            H.count(writes, 1, "only DIALOG_ENHANCE should have moved")
+            H.equal(writes[1].args[1], "DIALOG_ENHANCE")
+            H.equal(writes[1].args[2], "5")
+            H.equal(mock.variables.DIALOG_ENHANCE, "5")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a /cal container replace re-derives DIRAC_SLOT and LIP_SYNC_MS and nothing else",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            sendFrame("msoupdate " .. JSON:encode({
+                { op = "replace", path = "/cal", value = {
+                    vpl = -50, vph = 0, zeroPoint = 0, diracactive = "on",
+                    currentdiracslot = 4, lipsync = 90,
+                } },
+            }))
+            H.equal(mock.variables.DIRAC_SLOT, "4")
+            H.equal(mock.variables.LIP_SYNC_MS, "90")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
         name = "a redundant push writes no variables and fires no events",
         fn = function()
             loadDriver()
@@ -568,6 +685,12 @@ return {
             H.equal(mock.variables.VIDEO_COLORSPACE, "")
             H.equal(mock.variables.VIDEO_HDR, "")
             H.equal(mock.variables.DIRAC_STATE, "")
+            H.equal(mock.variables.LOUDNESS, "", "loudness is absent from F.sparse()")
+            H.equal(mock.variables.NIGHT_MODE, "")
+            H.equal(mock.variables.DIALOG_ENHANCE, "")
+            H.equal(mock.variables.BASS_ENHANCE, "")
+            H.equal(mock.variables.DIRAC_SLOT, "")
+            H.equal(mock.variables.LIP_SYNC_MS, "")
             H.equal(mock.variables.INPUT_ID, "", "input is absent from F.sparse()")
             H.equal(mock.variables.INPUT_LABEL, "", "no input selected, so no label to show")
             H.equal(mock.variables.VOLUME_PERCENT, "", "vpl/vph are absent, so no percent can be computed")
@@ -675,6 +798,738 @@ return {
             H.count(fired, 1)
             H.equal(fired[1].args[1], "Surround Mode Changed")
             H.equal(mock.variables.SURROUND_MODE, "Dolby Surround")
+            H.assertNoErrorLog()
+        end,
+    },
+
+    --------------------------------------------------------------------------
+    -- Programming commands
+    --------------------------------------------------------------------------
+    {
+        name = "a command invoked with no parameter at all writes nothing",
+        fn = function()
+            -- Control4 should always supply a declared param, but a command
+            -- invoked from a hand-written program or a malformed call must not
+            -- reach the unit with a nil mode.
+            loadDriver()
+            goLive()
+            for _, command in ipairs({ "Set Dirac Processing", "Set Night Mode",
+                                        "Set Bass Enhance", "Run Macro" }) do
+                mock.clearCalls()
+                ExecuteCommand(command, {})
+                mock.advance(50)
+                for _, raw in ipairs(mock.sent) do
+                    H.isTrue(raw:find("changemso", 1, true) == nil,
+                        command .. " with no parameter must not write")
+                end
+                -- A name this driver does not have would also "not write", and
+                -- would pass this test while covering nothing at all.
+                for _, line in ipairs(mock.printed) do
+                    H.isTrue(line:find("no handler for action", 1, true) == nil,
+                        command .. " is not a command this driver has: " .. line)
+                end
+                -- INSIDE the loop: mock.clearCalls() above wipes mock.printed
+                -- every iteration, so an assertion after the loop can only ever
+                -- see the last command -- and a missing guard on any of the
+                -- others would slip through, which is exactly what happened.
+                H.assertNoErrorLog()
+            end
+        end,
+    },
+    {
+        name = "every command declared in driver.xml has a handler",
+        fn = function()
+            -- Mirrors the actions-coverage test above, but for <commands>: a
+            -- programming command arrives as ExecuteCommand("<declared name>",
+            -- tParams) directly -- the exact declared name, spaces and all --
+            -- never wrapped in LUA_ACTION the way an Actions-tab entry is.
+            local handle = assert(io.open("driver.xml", "r"))
+            local xml = handle:read("*a")
+            handle:close()
+
+            -- Scoped to the <commands> block on purpose. An unscoped search for
+            -- <command> also matches the <command>TOKEN</command> inside every
+            -- <action>; that only fails to break this test because an action's
+            -- command element has no nested <name>, which is coincidence, not
+            -- construction.
+            local commandsBlock = xml:match("<commands>(.-)</commands>") or ""
+            local names = {}
+            for block in commandsBlock:gmatch("<command>(.-)</command>") do
+                local name = block:match("<name>%s*(.-)%s*</name>")
+                if name then table.insert(names, name) end
+            end
+            H.isTrue(#names >= 6, "expected the declared commands, found " .. #names)
+
+            loadDriver()
+            goLive()
+            for _, name in ipairs(names) do
+                mock.clearCalls()
+                ExecuteCommand(name, {})
+                for _, line in ipairs(mock.printed) do
+                    H.isTrue(line:find("no handler for action", 1, true) == nil,
+                        name .. " has no handler: " .. line)
+                end
+                H.assertNoErrorLog()
+            end
+        end,
+    },
+    {
+        name = "Set Dirac Processing writes /cal/diracactive with the chosen mode",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            ExecuteCommand("Set Dirac Processing", { Mode = "Bypass" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/cal/diracactive")
+            H.equal(ops[1].value, "bypass")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Set Night Mode writes /night with the chosen mode",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            ExecuteCommand("Set Night Mode", { Mode = "Auto" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/night")
+            H.equal(ops[1].value, "auto")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Set Dialog Enhance writes /dialogEnh as a number, from a string parameter",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            -- Control4 delivers every programming-command parameter as a
+            -- string, "5" not 5 -- this is the real shape.
+            ExecuteCommand("Set Dialog Enhance", { Level = "5" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/dialogEnh")
+            H.equal(ops[1].value, 5)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Set Bass Enhance writes /bassenhance with the chosen mode",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            ExecuteCommand("Set Bass Enhance", { Mode = "On" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/bassenhance")
+            H.equal(ops[1].value, "on")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Toggle Bass Enhance flips from whatever the unit currently reports",
+        fn = function()
+            loadDriver()
+            goLive()   -- F.modern() reports bassenhance = "off"
+            mock.clearCalls()
+            ExecuteCommand("Toggle Bass Enhance", {})
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/bassenhance")
+            H.equal(ops[1].value, "on", "toggled from off")
+
+            ExecuteCommand("Toggle Bass Enhance", {})
+            mock.advance(50)
+            H.equal(lastWrittenOps()[1].value, "off", "toggled back from on")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Set Lip Sync Delay writes both the calibration path and the current input's own delay",
+        fn = function()
+            loadDriver()
+            goLive()   -- F.modern()'s selected input is h1
+            mock.clearCalls()
+            ExecuteCommand("Set Lip Sync Delay", { Delay = "90" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.isTrue(ops ~= nil and #ops >= 2,
+                "expected both writes in one flush, got " .. tostring(ops and #ops))
+
+            local byPath = {}
+            for _, op in ipairs(ops) do byPath[op.path] = op.value end
+            H.equal(byPath["/cal/lipsync"], 90)
+            H.equal(byPath["/inputs/h1/delay"], 90)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Set Lip Sync Delay writes only /cal/lipsync when no input is known",
+        fn = function()
+            loadDriver()
+            local F = require("tests.fixtures")
+            goLiveWith(F.sparse())   -- { volume = -10, powerIsOn = false }: no input at all
+            H.equal(DRIVER.state.fields.input, nil, "the fixture reports no input")
+            mock.clearCalls()
+            ExecuteCommand("Set Lip Sync Delay", { Delay = "50" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 1, "only the calibration path should be written, not a nil-keyed input path")
+            H.equal(ops[1].path, "/cal/lipsync")
+            H.equal(ops[1].value, 50)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Set Dirac Slot writes /cal/currentdiracslot as a number, from a string parameter",
+        fn = function()
+            loadDriver()
+            goLive()   -- F.modern() starts on wire slot 0
+            mock.clearCalls()
+            ExecuteCommand("Set Dirac Slot", { Slot = "4" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/cal/currentdiracslot")
+            H.equal(ops[1].value, 4)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "an out-of-range or unrecognised command parameter is refused: a log line, no write",
+        fn = function()
+            loadDriver({ ["Debug Mode"] = "On" })
+            goLive()
+
+            local cases = {
+                { "Set Dirac Processing", { Mode = "Loud" } },
+                { "Set Night Mode",     { Mode = "Maximum" } },
+                { "Set Dialog Enhance", { Level = "7" } },
+                { "Set Dialog Enhance", { Level = "-1" } },
+                { "Set Dialog Enhance", { Level = "not a number" } },
+                { "Set Bass Enhance",   { Mode = "Maybe" } },
+                { "Set Lip Sync Delay", { Delay = "341" } },
+                { "Set Lip Sync Delay", { Delay = "-1" } },
+                { "Set Lip Sync Delay", { Delay = "not a number" } },
+                { "Set Dirac Slot",     { Slot = "6" } },
+                { "Set Dirac Slot",     { Slot = "-1" } },
+                { "Set Dirac Slot",     { Slot = "not a number" } },
+            }
+            for _, case in ipairs(cases) do
+                local name, params = case[1], case[2]
+                mock.clearCalls()
+                ExecuteCommand(name, params)
+                mock.advance(50)
+                H.equal(lastWrittenOps(), nil, name .. " should not have written anything")
+
+                local logged = false
+                for _, line in ipairs(mock.printed) do
+                    if line:find("HTP-1:", 1, true) then logged = true end
+                end
+                H.isTrue(logged, name .. " should have logged the rejection")
+                H.assertNoErrorLog()
+            end
+        end,
+    },
+
+    --------------------------------------------------------------------------
+    -- Dirac Filter picker
+    --------------------------------------------------------------------------
+    {
+        name = "the Dirac Filter list is populated from the unit's own slot names, in wire " ..
+               "order, with the current slot selected",
+        fn = function()
+            loadDriver()
+            goLive()   -- F.modern(): Calibrated/Flat/""/Movie/Music/Custom, slot 0 selected
+            local last = lastPropertyList("Dirac Filter")
+            H.isTrue(last ~= nil, "the property should have been populated on the first document")
+            H.equal(last.args[2],
+                "0 - Calibrated,1 - Flat,2 - Slot 2,3 - Movie,4 - Music,5 - Custom",
+                "wire order, comma-separated, the unnamed slot falling back to its own number")
+            H.equal(last.args[3], "0 - Calibrated", "wire slot 0 is the unit's current selection")
+            H.equal(Properties["Dirac Filter"], "0 - Calibrated")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a slot the unit left unnamed still appears in the list, and can be the selection",
+        fn = function()
+            loadDriver()
+            local F = require("tests.fixtures")
+            -- F.legacy(): wire slot 1 has no `name` key at all; currentdiracslot = 1.
+            goLiveWith(F.legacy())
+            local last = lastPropertyList("Dirac Filter")
+            H.equal(last.args[2],
+                "0 - Slot 1,1 - Slot 1,2 - Flat,3 - Movie,4 - Music,5 - Custom",
+                "wire slot 0's real invented name happens to read 'Slot 1' too; wire slot 1 is " ..
+                "the unnamed fallback -- the leading index keeps the two apart")
+            H.equal(last.args[3], "1 - Slot 1", "the unit's current slot has no name either")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "selecting a Dirac Filter entry writes the matching integer slot",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            Properties["Dirac Filter"] = "3 - Movie"
+            OnPropertyChanged("Dirac Filter")
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/cal/currentdiracslot")
+            H.equal(ops[1].value, 3)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "selecting the entry for wire index 2 writes 2, not 1 or 3",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            Properties["Dirac Filter"] = "2 - Slot 2"
+            OnPropertyChanged("Dirac Filter")
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.equal(ops[1].path, "/cal/currentdiracslot")
+            H.equal(ops[1].value, 2, "wire index 2 must write 2, not an off-by-one neighbour")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "selecting the entry already selected writes nothing",
+        fn = function()
+            -- The direct case of the feedback-loop guard: choosing the slot the
+            -- unit already reports is indistinguishable from Composer replaying
+            -- the driver's own selection back, so both must be silent.
+            loadDriver()
+            goLive()   -- F.modern() starts on wire slot 0
+            mock.clearCalls()
+            Properties["Dirac Filter"] = "0 - Calibrated"
+            OnPropertyChanged("Dirac Filter")
+            mock.advance(50)
+            H.equal(lastWrittenOps(), nil, "already the unit's current slot; nothing to write")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a push from the unit updates the Dirac Filter property and writes nothing back",
+        fn = function()
+            -- The loop this guards against: the driver writes the slot, the
+            -- unit echoes it back as a push, the push repopulates the property
+            -- via UpdatePropertyList, and Composer may report that repopulation
+            -- as its own property change. None of that may turn into a second
+            -- write.
+            loadDriver()
+            goLive()   -- F.modern() starts on wire slot 0
+            mock.clearCalls()
+            pushUpdate("/cal/currentdiracslot", 3)
+            H.equal(Properties["Dirac Filter"], "3 - Movie",
+                "the property should reflect the unit's own push")
+
+            -- Composer replaying the driver's own UpdatePropertyList call.
+            OnPropertyChanged("Dirac Filter")
+            mock.advance(50)
+            H.equal(lastWrittenOps(), nil, "nothing should be written back to the unit")
+            H.assertNoErrorLog()
+        end,
+    },
+
+    --------------------------------------------------------------------------
+    -- Macros
+    --------------------------------------------------------------------------
+    -- F.modern()'s stored macros, in slot order:
+    --   cmda        "Movie Night"  /volume -22, /dialogEnh 5
+    --   cmdb        "Listening"    /volume -40 then /volume -30
+    --   cmdc        "Late Night"   nothing stored
+    --   cmdd        unnamed        one good operation among three that are not
+    --   preset1     "Preset 1"     /upmix/select auro
+    --   cmdcustom1  unnamed        /muted true
+    {
+        name = "the Macro list carries the names the unit gave its stored macros",
+        fn = function()
+            loadDriver()
+            goLive()
+            local last = lastPropertyList("Macro")
+            H.isTrue(last ~= nil, "the property should be populated from the first document")
+            H.equal(last.args[2], "Movie Night,Listening,cmdd,Preset 1,cmdcustom1",
+                "in slot order, with the slot key standing in where the owner named nothing")
+            H.equal(last.args[3], "Movie Night",
+                "the first entry, since nothing had been selected before")
+            H.equal(Properties["Macro"], "Movie Night")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a slot the unit named but left empty is not offered",
+        fn = function()
+            -- Selecting it could only do nothing, which is worse than not
+            -- offering it: it looks like a control.
+            loadDriver()
+            goLive()
+            local items = lastPropertyList("Macro").args[2]
+            H.equal(items:find("Late Night", 1, true), nil,
+                "cmdc is named but stores no operations: " .. items)
+            H.equal(DRIVER.state.macros.cmdc.name, "Late Night",
+                "the name is still tracked, just not offered")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "the Macro property is left alone when the unit reports no macros at all",
+        fn = function()
+            loadDriver()
+            local F = require("tests.fixtures")
+            goLiveWith(F.legacy())   -- no /svronly block at all
+            H.equal(lastPropertyList("Macro"), nil,
+                "an empty list is worse than leaving Composer showing what it had")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Run Selected Macro replays the stored operations as one changemso",
+        fn = function()
+            loadDriver()
+            goLive()   -- selects the first entry, "Movie Night" (cmda)
+            mock.clearCalls()
+            ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
+            mock.advance(50)
+
+            H.equal(changeMsoCount(), 1, "one message, not one per operation")
+            local ops = lastWrittenOps()
+            H.count(ops, 2, "a macro touching two paths must send both")
+            local byPath = {}
+            for _, op in ipairs(ops) do byPath[op.path] = op.value end
+            H.equal(byPath["/volume"], -22)
+            H.equal(byPath["/dialogEnh"], 5)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Run Selected Macro runs whatever the property currently shows",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            Properties["Macro"] = "cmdcustom1"   -- the installer picking another entry
+            ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 1)
+            H.equal(ops[1].path, "/muted")
+            H.equal(ops[1].value, true)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Run Selected Macro runs the entry that was picked, not a slot that shares its text",
+        fn = function()
+            -- The action never sees a slot key: Composer hands it the DISPLAY
+            -- TEXT of the entry the installer chose, and for that text is
+            -- authoritative by construction. Preferring a slot-key match runs a
+            -- different macro whenever an owner has named one after a slot key
+            -- -- which they are entitled to do.
+            loadDriver()
+            goLive()
+            pushUpdate("/svronly/macroNames/cmda", "cmdcustom1")
+            Properties["Macro"] = "cmdcustom1"
+
+            mock.clearCalls()
+            ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 2, "cmda is the first entry reading 'cmdcustom1', and what was picked")
+            local byPath = {}
+            for _, op in ipairs(ops) do byPath[op.path] = op.value end
+            H.equal(byPath["/volume"], -22)
+            H.equal(byPath["/dialogEnh"], 5)
+            H.equal(byPath["/muted"], nil, "the cmdcustom1 SLOT must not have run instead")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Run Macro still resolves a slot key ahead of a macro named after one",
+        fn = function()
+            -- The command's flexibility is deliberate and stays: a programmer
+            -- typing 'cmdcustom1' means the slot, which is the unambiguous
+            -- request, and is what survives the macro being renamed.
+            loadDriver()
+            goLive()
+            pushUpdate("/svronly/macroNames/cmda", "cmdcustom1")
+
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "cmdcustom1" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 1, "the slot key wins where the two could collide")
+            H.equal(ops[1].path, "/muted")
+            H.equal(ops[1].value, true)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a macro touching one path twice sends only the later value",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "Listening" })   -- cmdb
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 1, "coalesced by path; sending both would be a write the second undoes")
+            H.equal(ops[1].path, "/volume")
+            H.equal(ops[1].value, -30, "the later of the two stored values")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Run Macro accepts either the macro's name or its slot key",
+        fn = function()
+            loadDriver()
+            goLive()
+            for _, request in ipairs({ "Movie Night", "cmda" }) do
+                mock.clearCalls()
+                ExecuteCommand("Run Macro", { Macro = request })
+                mock.advance(50)
+                local ops = lastWrittenOps()
+                H.count(ops, 2, "'" .. request .. "' should have run cmda")
+                local byPath = {}
+                for _, op in ipairs(ops) do byPath[op.path] = op.value end
+                H.equal(byPath["/volume"], -22, "'" .. request .. "'")
+                H.equal(byPath["/dialogEnh"], 5, "'" .. request .. "'")
+            end
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "an entry that is not an operation is skipped rather than forwarded",
+        fn = function()
+            -- cmdd stores a bare string, an entry with no op, an entry with no
+            -- path, and a remove with no value -- alongside one real operation.
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "cmdd" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 1, "only the one well-formed operation may reach the unit")
+            H.equal(ops[1].path, "/night")
+            H.equal(ops[1].value, "auto")
+            -- NOT H.assertNoErrorLog(): skipping four of five stored entries is
+            -- now reported at the always-written level on purpose, because the
+            -- macro did not run in full. Asserting the report is strictly more
+            -- than asserting silence was -- silence here was the defect.
+            H.isTrue(loggedContaining("ran 1 of 5 stored entries"),
+                "the four skipped entries must be reported, not passed over quietly")
+            -- But the report must be the ONLY thing reported. Swapping silence
+            -- for one expected line would otherwise stop catching a second,
+            -- unrelated error raised on the same path.
+            local errors = 0
+            for _, line in ipairs(mock.printed) do
+                if line:find("ErrorLog:", 1, true) then errors = errors + 1 end
+            end
+            H.equal(errors, 1, "the skip report is the only error this run may log")
+        end,
+    },
+    {
+        name = "a stored guard or add is not sent; only the replace reaches the unit",
+        fn = function()
+            -- Only `replace` survives ingest, because only `replace` is what the
+            -- write path sends. A stored `test` is a guard the unit evaluates --
+            -- replaying it as a replace would MUTE the room -- and an `add`
+            -- would arrive as a replace on a member the unit does not have,
+            -- which it rejects wholesale.
+            loadDriver()
+            goLive()
+            sendFrame("msoupdate " .. JSON:encode({
+                { op = "replace", path = "/svronly/preset2", value = {
+                    { op = "test",    path = "/muted",        value = true },
+                    { op = "add",     path = "/upmix/select", value = "auro" },
+                    { op = "replace", path = "/night",        value = "auto" },
+                } },
+            }))
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "preset2" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 1, "only the replace may reach the unit")
+            H.equal(ops[1].path, "/night")
+            H.equal(ops[1].value, "auto")
+        end,
+    },
+    {
+        name = "a slot storing only non-replace entries is not offered and runs nothing",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            sendFrame("msoupdate " .. JSON:encode({
+                { op = "replace", path = "/svronly/preset3", value = {
+                    { op = "test", path = "/muted", value = true },
+                } },
+            }))
+            H.equal(lastPropertyList("Macro"), nil,
+                "a slot with nothing replayable never enters the picker")
+
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "preset3" })
+            mock.advance(50)
+            H.equal(changeMsoCount(), 0, "a guard must never be executed as a setting")
+            H.equal(lastWrittenOps(), nil)
+            H.isTrue(loggedContaining("ran 0 of 1 stored entries"),
+                "and a macro that did nothing at all must not look like one that ran")
+        end,
+    },
+    {
+        name = "a macro that could not run in full says so with Debug Mode off",
+        fn = function()
+            -- Off is the SHIPPING DEFAULT, and a macro that under-runs is
+            -- exactly the case that must not be hidden behind a debug switch:
+            -- the owner pressed one button and got part of what they saved.
+            loadDriver()
+            H.equal(Properties["Debug Mode"], "Off")
+            goLive()
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "cmdd" })
+            mock.advance(50)
+
+            local ops = lastWrittenOps()
+            H.count(ops, 1, "the one replayable operation still runs")
+            H.isTrue(loggedContaining("ran 1 of 5 stored entries"),
+                "the installer is told how much of the macro did not run")
+            H.isTrue(loggedContaining("ErrorLog:"),
+                "reported at the one level this logger always writes")
+        end,
+    },
+    {
+        name = "an empty macro sends nothing and says why",
+        fn = function()
+            -- An empty changemso would encode as {} rather than [] and the unit
+            -- rejects it, so there is nothing safe to send.
+            loadDriver({ ["Debug Mode"] = "On" })
+            goLive()
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "Late Night" })   -- cmdc, named but empty
+            mock.advance(50)
+            H.equal(changeMsoCount(), 0, "nothing at all should have been sent")
+            H.equal(lastWrittenOps(), nil)
+            H.isTrue(loggedContaining("has no stored operations"),
+                "the refusal should be explained, not silent")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a macro name that matches nothing sends nothing and says why",
+        fn = function()
+            loadDriver({ ["Debug Mode"] = "On" })
+            goLive()
+            for _, request in ipairs({ "Nothing By That Name", "" }) do
+                mock.clearCalls()
+                ExecuteCommand("Run Macro", { Macro = request })
+                mock.advance(50)
+                H.equal(changeMsoCount(), 0, "'" .. request .. "' should have sent nothing")
+                H.isTrue(loggedContaining("no macro named"),
+                    "'" .. request .. "' should have been explained")
+            end
+
+            -- The action has the same problem when nothing is selected yet.
+            mock.clearCalls()
+            Properties["Macro"] = ""
+            ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
+            mock.advance(50)
+            H.equal(changeMsoCount(), 0)
+            H.isTrue(loggedContaining("no macro named"))
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "selecting a macro in Composer selects it and does not run it",
+        fn = function()
+            -- The reason this list needs no feedback-loop guard of its own: a
+            -- selection, whether the installer's or Composer echoing the
+            -- driver's own UpdatePropertyList back, never reaches the unit.
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            Properties["Macro"] = "Preset 1"
+            OnPropertyChanged("Macro")
+            mock.advance(50)
+            H.equal(lastWrittenOps(), nil, "running one is the action's job, not the property's")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a macro renamed on the unit repopulates the list and keeps the selection",
+        fn = function()
+            loadDriver()
+            goLive()
+            Properties["Macro"] = "Preset 1"   -- the installer's own choice
+            mock.clearCalls()
+            pushUpdate("/svronly/macroNames/cmdb", "Evening")
+            mock.advance(50)
+
+            local last = lastPropertyList("Macro")
+            H.isTrue(last ~= nil, "the unit's rename should reach Composer")
+            H.equal(last.args[2], "Movie Night,Evening,cmdd,Preset 1,cmdcustom1")
+            H.equal(last.args[3], "Preset 1",
+                "the installer's selection survives a repopulation")
+            H.equal(lastWrittenOps(), nil, "a push must never turn into a write")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a macro deleted on the unit leaves the list and stops running",
+        fn = function()
+            -- A re-read is a complete document, so a slot it no longer carries
+            -- is a slot the owner deleted. Leaving it runnable would put the
+            -- owner's old operations on the wire long after they removed them.
+            loadDriver()
+            goLive()
+            local F = require("tests.fixtures")
+            local doc = F.modern()
+            doc.svronly.cmda = nil
+            doc.svronly.macroNames.cmda = nil
+
+            mock.clearCalls()
+            sendFrame("mso " .. JSON:encode(doc))
+            local last = lastPropertyList("Macro")
+            H.isTrue(last ~= nil, "the picker has to lose the entry")
+            H.equal(last.args[2], "Listening,cmdd,Preset 1,cmdcustom1")
+
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "Movie Night" })
+            mock.advance(50)
+            H.equal(changeMsoCount(), 0, "a deleted macro must not still reach the unit")
+            H.equal(lastWrittenOps(), nil)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a macro stored on the unit after connecting appears in the list",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            sendFrame("msoupdate " .. JSON:encode({
+                { op = "replace", path = "/svronly/cmdc",
+                  value = { { op = "replace", path = "/loudness", value = "on" } } },
+            }))
+            local last = lastPropertyList("Macro")
+            H.isTrue(last ~= nil, "gaining operations puts a named slot into the list")
+            H.equal(last.args[2], "Movie Night,Listening,Late Night,cmdd,Preset 1,cmdcustom1")
+
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "Late Night" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 1, "and it runs what the unit now stores there")
+            H.equal(ops[1].path, "/loudness")
+            H.equal(ops[1].value, "on")
             H.assertNoErrorLog()
         end,
     },

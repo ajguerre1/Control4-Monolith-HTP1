@@ -55,6 +55,9 @@ $payload = @(
     'htp1/proxy.lua'
     'htp1/log.lua'
     'module/json.lua'
+    # Rendered in Composer's Documentation tab; declared by
+    # <documentation> in driver.xml, and pinned by tests/test_manifest.lua.
+    'www/documentation/index.html'
 )
 
 function Get-SourcePath([string]$entry) {
