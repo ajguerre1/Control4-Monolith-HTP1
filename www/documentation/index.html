@@ -55,7 +55,7 @@
 
 <h1>Monoprice Monolith HTP-1</h1>
 <p class="lede">Control4 driver for the HTP-1 AV processor, over IP.</p>
-<p class="meta">Driver 107 &middot; requires Control4 OS 3.x &middot; HTP-1 firmware 1.13.x or 2.1.x</p>
+<p class="meta">Driver 108 &middot; requires Control4 OS 3.x &middot; HTP-1 firmware 1.13.x or 2.1.x</p>
 
 <h2>What this driver does</h2>
 <p>
@@ -464,6 +464,19 @@
   name never changes, so Composer updates in place rather than adding a second driver.
 </p>
 
+<h3>1.0.8 &nbsp;<span class="meta">(driver 108)</span></h3>
+<ul>
+  <li><strong>Correction:</strong> 1.0.6 and 1.0.7 said the Navigator and touchscreen icon would
+      not render for this driver. <strong>It does.</strong> Confirmed on real hardware — the icon
+      appears on Navigators and handheld remotes. Nothing in the driver changed to make that true;
+      only the documentation was wrong, and it is corrected here and in the driver's own comments.</li>
+  <li>Why it was wrong is worth knowing if you ever extend this driver: the claim came from
+      scanning the Control4 components installed on a Windows PC, and the component that actually
+      draws a Navigator tile is not one of them — it runs on the touchscreens and the phone app.
+      Every individual fact in that research was accurate; the conclusion drawn from it was about
+      the wrong machine.</li>
+</ul>
+
 <h3>1.0.7 &nbsp;<span class="meta">(driver 107)</span></h3>
 <ul>
   <li>The icon is now the Monolith brand mark, on its own dark tile so it reads against both
@@ -480,13 +493,9 @@
 <ul>
   <li>The driver has its own icon in Composer's System Design tree, instead of the stock receiver
       image.</li>
-  <li>An icon set for Navigators and touchscreens ships too, at the five sizes Control4 uses, but
-      <strong>it will not render for this driver</strong> and that is not a fault in it: a
-      receiver-class device does not get its own Navigator tile — it is an AV path and volume
-      device rather than a selectable source — and the Control4 component that drives a receiver
-      does not read icon declarations at all. The files are inert, correct, and kept for the day
-      this driver grows a device type that does show one. <strong>The Composer tree icon above is
-      the one that renders.</strong></li>
+  <li>An icon set for Navigators and touchscreens ships too, at the five sizes Control4 uses.
+      <em>This release's notes claimed it would not render for a receiver-class device. That was
+      wrong — see 1.0.8.</em></li>
   <li>This changelog, and the version above it, are now checked against the driver's declared
       version on every test run — they had drifted once.</li>
 </ul>

@@ -6,7 +6,7 @@
 	<model>HTP-1</model>
 	<created>08/04/2026 12:00</created>
 	<modified>08/06/2026 12:00</modified>
-	<version>107</version>
+	<version>108</version>
 	<auto_update>false</auto_update>
 	<!-- Deliberately empty, overriding the receiver proxy's own roomAutoBind.
 	     That proxy claims AudioSelectionDevice, AudioVolumeDevice,
@@ -300,22 +300,24 @@
 		     here - because that is how the controller resolves the driver's own
 		     web root.
 
-		     THIS DOES NOT RENDER FOR THIS DRIVER, and it is worth being exact
-		     rather than hopeful about why. Drivers\Control\receiver.c4d.dll
-		     contains neither "navigator_display_option" nor "display_icons";
-		     uibutton.c4d.dll is the only binary in the runtime that reads
-		     display_icons at all. Across the whole local library the element is
-		     declared by uibutton, media_service, thermostatV2, media_player and
-		     amplifier proxies - and by no receiver, ever. That is consistent
-		     with a receiver having no Navigator tile of its own: it is an AV
-		     path and volume device, not a selectable source.
+		     CONFIRMED RENDERING ON HARDWARE. The driver's icon appears on the
+		     owner's Navigators and handheld remotes with this block in place.
 
-		     Kept anyway, deliberately. The block is inert - <capabilities>
-		     carries no schema, and a key nothing reads cannot break anything -
-		     it is a byte-for-byte match for the shape shipped drivers use, and
-		     it is already correct for the day this driver grows a device type
-		     that does show a tile. The Composer tree icon above is the one that
-		     actually renders today. -->
+		     That is worth recording because the desk research said it would
+		     not, and the research was wrong in its CONCLUSION while being
+		     right in every FACT: receiver.c4d.dll really does contain neither
+		     "navigator_display_option" nor "display_icons"; uibutton.c4d.dll
+		     really is the only binary ON A COMPOSER MACHINE that reads them;
+		     and no receiver driver in the local library declares the element.
+		     What none of that could show is what the Navigator client does,
+		     because the client is not installed here - it runs on the
+		     touchscreens and the phone app. Reading it as proof of absence was
+		     a claim about the wrong machine.
+
+		     The lesson, for whoever edits this next: this whole block is
+		     unverifiable from a development PC, so treat hardware as the only
+		     authority on it and do not "correct" it back on the strength of a
+		     binary scan. -->
 		<navigator_display_option proxybindingid="5001">
 			<display_icons>
 				<Icon width="70"   height="70">controller://driver/Monolith.HTP1/icons/device/experience_70.png</Icon>
