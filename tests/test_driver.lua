@@ -1326,6 +1326,14 @@ return {
             -- than asserting silence was -- silence here was the defect.
             H.isTrue(loggedContaining("ran 1 of 5 stored entries"),
                 "the four skipped entries must be reported, not passed over quietly")
+            -- But the report must be the ONLY thing reported. Swapping silence
+            -- for one expected line would otherwise stop catching a second,
+            -- unrelated error raised on the same path.
+            local errors = 0
+            for _, line in ipairs(mock.printed) do
+                if line:find("ErrorLog:", 1, true) then errors = errors + 1 end
+            end
+            H.equal(errors, 1, "the skip report is the only error this run may log")
         end,
     },
     {
