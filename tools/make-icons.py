@@ -75,10 +75,22 @@ def render(n):
     # A sheen down the left face: what stops the slab reading as a flat bar.
     # Only where there is room for it. Below 70px the slab is under ten pixels
     # across, and a highlight there costs more legibility than it buys depth.
+    #
+    # COMPOSITED, NOT DRAWN. ImageDraw REPLACES pixels on an RGBA image rather
+    # than blending them, so drawing a 13%-alpha rectangle straight onto the
+    # slab punches a near-transparent hole through it instead of lightening it
+    # -- a white gutter on Composer's tree, a dark notch on a touchscreen. It
+    # has to go onto its own layer and be alpha-composited back.
     if n >= 70:
         sheen_w = (right - left) * 0.15
-        draw.rectangle([left + rim_w, top + rim_w, left + rim_w + sheen_w, bottom - rim_w],
-                       fill=SHEEN + (34,))
+        layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        ImageDraw.Draw(layer).rectangle(
+            [left + rim_w, top + rim_w, left + rim_w + sheen_w, bottom - rim_w],
+            fill=SHEEN + (34,))
+        img = Image.alpha_composite(img, layer)
+        # Rebind: the old draw still points at the pre-composite image, and
+        # everything drawn through it after this would be silently discarded.
+        draw = ImageDraw.Draw(img)
 
     # The display. Omitted below 32px, where one pixel of accent only muddies
     # the silhouette it is meant to sit on.

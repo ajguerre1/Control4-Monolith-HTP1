@@ -127,23 +127,26 @@ return {
             -- is the part that is easy to get wrong -- "icons/device_sm.png"
             -- means www/icons/device_sm.png, not icons/device_sm.png.
             local xml = readManifest()
-            local declared = {}
+            local declared, expected = {}, {}
 
-            for path in xml:gmatch('_image="([^"]+)"') do declared[path] = true end
-            for path in xml:gmatch('<small image_source="c4z">([^<]+)</small>') do
+            -- Sizes come from the ELEMENT, never from the file name. Keying
+            -- them off the path meant renaming an icon everywhere at once
+            -- silently skipped the size check -- proven: a coordinated rename
+            -- to a 64x64 file left the suite green.
+            for _, row in ipairs({ { "small", 16 }, { "large", 32 } }) do
+                local tag, size = row[1], row[2]
+                local path = xml:match("<" .. tag .. ' image_source="c4z">([^<]+)</' .. tag .. ">")
+                H.isTrue(path ~= nil, "no <" .. tag .. "> icon declared")
                 declared[path] = true
-            end
-            for path in xml:gmatch('<large image_source="c4z">([^<]+)</large>') do
-                declared[path] = true
+                expected[path] = size
+
+                -- The proxy attribute is a second declaration site for the same
+                -- image, and the two disagreeing is a real failure: Composer's
+                -- tree and the proxy would show different icons.
+                local attr = xml:match(tag .. '_image="([^"]+)"')
+                H.equal(attr, path, "<" .. tag .. "> and " .. tag .. "_image should agree")
             end
             H.isTrue(next(declared) ~= nil, "the driver should declare Composer icons")
-
-            -- The Navigator ladder carries its size in the element, so each one
-            -- asserts against what it itself claims rather than a list here.
-            local expected = {
-                ["icons/device_sm.png"] = 16,
-                ["icons/device_lg.png"] = 32,
-            }
             for w, h, uri in xml:gmatch('<Icon width="(%d+)"%s+height="(%d+)">([^<]+)</Icon>') do
                 H.equal(w, h, "Navigator icons are square")
                 local path = uri:match("^controller://driver/[^/]+/(.+)$")
@@ -189,8 +192,11 @@ return {
             local script = build:read("*a")
             build:close()
 
-            local archive = script:match("([%w%.%-_]+)%.c4z")
-            H.isTrue(archive ~= nil, "could not find the archive name in the build script")
+            -- Anchored on the parameter, not on the first *.c4z token anywhere
+            -- in the file: a comment mentioning some other archive name used to
+            -- be enough to make this test read the wrong one.
+            local archive = script:match("%$OutputName%s*=%s*'([^']+)%.c4z'")
+            H.isTrue(archive ~= nil, "could not find $OutputName in the build script")
             H.equal(archive:find(" ", 1, true), nil,
                 "a space in the archive name arrives URL-encoded and does not resolve")
 

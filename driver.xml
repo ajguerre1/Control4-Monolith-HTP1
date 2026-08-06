@@ -5,7 +5,7 @@
 	<name>Monolith HTP-1</name>
 	<model>HTP-1</model>
 	<created>08/04/2026 12:00</created>
-	<modified>08/04/2026 12:00</modified>
+	<modified>08/06/2026 12:00</modified>
 	<version>106</version>
 	<auto_update>false</auto_update>
 	<!-- Deliberately empty, overriding the receiver proxy's own roomAutoBind.
@@ -300,13 +300,22 @@
 		     here - because that is how the controller resolves the driver's own
 		     web root.
 
-		     HONEST CAVEAT: unverified for a receiver-class device. No receiver
-		     driver in the local library declares display_icons, and receivers do
-		     not normally get their own Navigator tile - they are AV path and
-		     volume devices rather than selectable sources. Costs five small PNGs
-		     and cannot misbehave if it is never read, so it ships; but if the
-		     unit shows no custom icon on a touchscreen, this is why, and the
-		     Composer tree icon above is the one that is proven. -->
+		     THIS DOES NOT RENDER FOR THIS DRIVER, and it is worth being exact
+		     rather than hopeful about why. Drivers\Control\receiver.c4d.dll
+		     contains neither "navigator_display_option" nor "display_icons";
+		     uibutton.c4d.dll is the only binary in the runtime that reads
+		     display_icons at all. Across the whole local library the element is
+		     declared by uibutton, media_service, thermostatV2, media_player and
+		     amplifier proxies - and by no receiver, ever. That is consistent
+		     with a receiver having no Navigator tile of its own: it is an AV
+		     path and volume device, not a selectable source.
+
+		     Kept anyway, deliberately. The block is inert - <capabilities>
+		     carries no schema, and a key nothing reads cannot break anything -
+		     it is a byte-for-byte match for the shape shipped drivers use, and
+		     it is already correct for the day this driver grows a device type
+		     that does show a tile. The Composer tree icon above is the one that
+		     actually renders today. -->
 		<navigator_display_option proxybindingid="5001">
 			<display_icons>
 				<Icon width="70"   height="70">controller://driver/Monolith.HTP1/icons/device/experience_70.png</Icon>

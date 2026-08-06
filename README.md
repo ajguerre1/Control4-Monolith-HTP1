@@ -3,10 +3,11 @@
 A [Control4](https://www.control4.com/) DriverWorks driver that exposes the Monoprice Monolith HTP-1
 AV processor as a `receiver`-class device over IP.
 
-> **Status: v1.0.1 pre-release. Working on real hardware.**
+> **Status: v1.0.6. Working on real hardware.**
 > Installed in a real Control4 project and confirmed working: the driver arrives unbound, and volume
 > and mute feedback reach Navigator and the handheld remotes. Not yet proven over days of daily use —
 > see [Known unknowns](#known-unknowns) for what is still unverified.
+> Per-release detail lives in the driver's own Documentation tab, which carries the changelog.
 
 ## What it does today
 
@@ -79,7 +80,7 @@ that the socket opened and the unit's document parsed.
 luajit tests/run.lua
 ```
 
-202 tests, no controller and no device required: the framing, protocol, state and mapping layers have
+No controller and no device required: the framing, protocol, state and mapping layers have
 no dependency on the Control4 API, and the transport and proxy layers run against a mocked C4 API with
 virtual time. `tools/fake-htp1.py` serves the real protocol locally, with deliberate fault injection
 (mid-frame disconnects, byte-at-a-time delivery, a device that stops answering pings).

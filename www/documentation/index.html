@@ -446,13 +446,15 @@
 <ul>
   <li>The driver has its own icon in Composer's System Design tree, instead of the stock receiver
       image.</li>
-  <li>An icon set for Navigators and touchscreens ships too, at the five sizes Control4 uses.
-      <em>Unverified:</em> no receiver-class driver in the shipped Control4 library declares one, and
-      receivers do not normally get their own Navigator tile — they are AV path and volume devices
-      rather than selectable sources. If a touchscreen shows no custom icon, that is why; the
-      Composer tree icon is the one that is proven.</li>
+  <li>An icon set for Navigators and touchscreens ships too, at the five sizes Control4 uses, but
+      <strong>it will not render for this driver</strong> and that is not a fault in it: a
+      receiver-class device does not get its own Navigator tile — it is an AV path and volume
+      device rather than a selectable source — and the Control4 component that drives a receiver
+      does not read icon declarations at all. The files are inert, correct, and kept for the day
+      this driver grows a device type that does show one. <strong>The Composer tree icon above is
+      the one that renders.</strong></li>
   <li>This changelog, and the version above it, are now checked against the driver's declared
-      version on every build — they had drifted once.</li>
+      version on every test run — they had drifted once.</li>
 </ul>
 
 <h3>1.0.5 &nbsp;<span class="meta">(driver 105)</span></h3>
@@ -497,6 +499,10 @@
   <li>Six events: Connected, Disconnected, Powered On, Powered Off, Input Changed, Surround Mode
       Changed.</li>
   <li>Input labels — the unit's own names for its inputs, shown wherever an input is reported.</li>
+  <li><strong>Removed:</strong> the <code>Adopt Input Labels</code> property, which promised
+      something the platform cannot do — a driver cannot rename its own Control4 connections.
+      The <strong>Print Input Labels</strong> action replaces it: it lists what the unit calls each
+      input so you can rename the connections yourself.</li>
 </ul>
 
 <h3>1.0.1 &nbsp;<span class="meta">(driver 101)</span></h3>
@@ -515,6 +521,7 @@
 <ul>
   <li>First release. Connection, power, input selection, volume and mute over the unit's local
       WebSocket interface, as a Control4 <code>receiver</code>.</li>
+  <li>Listening-mode selection across all seven upmixers, as Control4 surround modes.</li>
 </ul>
 
 <footer>
