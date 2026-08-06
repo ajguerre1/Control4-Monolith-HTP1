@@ -55,7 +55,7 @@
 
 <h1>Monoprice Monolith HTP-1</h1>
 <p class="lede">Control4 driver for the HTP-1 AV processor, over IP.</p>
-<p class="meta">Driver 106 &middot; requires Control4 OS 3.x &middot; HTP-1 firmware 1.13.x or 2.1.x</p>
+<p class="meta">Driver 107 &middot; requires Control4 OS 3.x &middot; HTP-1 firmware 1.13.x or 2.1.x</p>
 
 <h2>What this driver does</h2>
 <p>
@@ -107,6 +107,28 @@
   unit's state was read. If Connection Status stays <em>Not connected</em>, check the IP address
   first — the driver retries on its own and needs no prompting once the address is right.
 </p>
+
+<h3 id="updating">Updating to a newer version</h3>
+<ol>
+  <li>Copy the new <code>Monolith.HTP1.c4z</code> over the old one in your Drivers folder. The file
+      name never changes between releases, which is what makes Composer update this driver in place
+      rather than add a second one.</li>
+  <li><strong>Driver &rsaquo; Add or Update Driver or Agent…</strong>, and pick the file.</li>
+</ol>
+<div class="note">
+  <strong>Composer caches a driver by its version number, not by the file.</strong>
+  If you replace the <code>.c4z</code> without the version changing, Composer keeps using the copy it
+  already has in memory and your new file is ignored — silently, with nothing in any log to say so.
+  Every release here bumps the version, so this only bites when building your own.
+</div>
+<div class="note">
+  <strong>The device icon is set when the device is added, and never updated afterwards.</strong>
+  Control4 writes the icon onto the project item at the moment you add the device, and updating a
+  driver does not rewrite it. So a release that changes the icon will not change what you see in
+  System Design, no matter how many times you update. <strong>Only removing the device from the
+  project and adding it again picks up a new icon</strong> — at the cost of redoing its bindings.
+  Nothing else about an update needs this; it is specific to the icon.
+</div>
 
 <h2>Properties</h2>
 
@@ -441,6 +463,18 @@
   <strong>Driver Version</strong> property. Every release installs over the one before it: the file
   name never changes, so Composer updates in place rather than adding a second driver.
 </p>
+
+<h3>1.0.7 &nbsp;<span class="meta">(driver 107)</span></h3>
+<ul>
+  <li>The icon is now the Monolith brand mark, on its own dark tile so it reads against both
+      Composer's light tree and a dark touchscreen. The wordmark is deliberately left out — it is
+      illegible below about 90px.</li>
+  <li><strong>If 1.0.6's icon never appeared for you, this is why, and it was not a fault in the
+      driver:</strong> Control4 writes a device's icon onto the project item when the device is
+      <em>added</em>, and never rewrites it when a driver is updated. Remove the device and add it
+      again to pick up the new icon. See <a href="#updating">Updating to a newer version</a>
+      above.</li>
+</ul>
 
 <h3>1.0.6 &nbsp;<span class="meta">(driver 106)</span></h3>
 <ul>
