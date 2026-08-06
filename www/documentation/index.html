@@ -55,7 +55,7 @@
 
 <h1>Monoprice Monolith HTP-1</h1>
 <p class="lede">Control4 driver for the HTP-1 AV processor, over IP.</p>
-<p class="meta">Driver 104 &middot; requires Control4 OS 3.x &middot; HTP-1 firmware 1.13.x or 2.1.x</p>
+<p class="meta">Driver 106 &middot; requires Control4 OS 3.x &middot; HTP-1 firmware 1.13.x or 2.1.x</p>
 
 <h2>What this driver does</h2>
 <p>
@@ -434,6 +434,95 @@
   <strong>Print Driver State</strong> and copy the Lua tab. Note the
   <strong>System Software Version</strong> — behaviour differs between 1.13.x and 2.1.x.
 </p>
+
+<h2>Changelog</h2>
+<p class="meta">
+  The number in brackets is the driver version Composer shows in the
+  <strong>Driver Version</strong> property. Every release installs over the one before it: the file
+  name never changes, so Composer updates in place rather than adding a second driver.
+</p>
+
+<h3>1.0.6 &nbsp;<span class="meta">(driver 106)</span></h3>
+<ul>
+  <li>The driver has its own icon in Composer's System Design tree, instead of the stock receiver
+      image.</li>
+  <li>An icon set for Navigators and touchscreens ships too, at the five sizes Control4 uses, but
+      <strong>it will not render for this driver</strong> and that is not a fault in it: a
+      receiver-class device does not get its own Navigator tile — it is an AV path and volume
+      device rather than a selectable source — and the Control4 component that drives a receiver
+      does not read icon declarations at all. The files are inert, correct, and kept for the day
+      this driver grows a device type that does show one. <strong>The Composer tree icon above is
+      the one that renders.</strong></li>
+  <li>This changelog, and the version above it, are now checked against the driver's declared
+      version on every test run — they had drifted once.</li>
+</ul>
+
+<h3>1.0.5 &nbsp;<span class="meta">(driver 105)</span></h3>
+<ul>
+  <li><strong>Fixed:</strong> deleting the selected macro on the unit promoted a different macro
+      into its place, so <strong>Run Selected Macro</strong> quietly began running something else.
+      The list now always carries a <code>(none)</code> entry and the selection falls there.</li>
+  <li><strong>Fixed:</strong> renaming the selected macro on the unit lost the selection. It now
+      follows the macro rather than the name, so programming keeps working across a rename.</li>
+  <li>The selection re-anchors on reconnect, so a macro slot edited while the driver was offline
+      cannot inherit your selection.</li>
+  <li>A macro named literally <code>(none)</code> is listed under its slot key, so it stays
+      selectable.</li>
+</ul>
+
+<h3>1.0.4 &nbsp;<span class="meta">(driver 104)</span></h3>
+<ul>
+  <li>Night mode, dialog enhancement, bass enhancement and lip sync — as variables and as
+      programming commands.</li>
+  <li>Loudness through the receiver proxy, so the room's own Loudness control works.</li>
+  <li><strong>Dirac Filter</strong> — pick a filter slot by the name its owner gave it.</li>
+  <li><strong>Macro</strong> — pick one of the macros the unit stores, and run it from an action or
+      from programming.</li>
+  <li>This documentation tab.</li>
+  <li><strong>Renamed:</strong> <code>Set Dirac</code> became <strong>Set Dirac Processing</strong>.
+      The old name was a strict prefix of <strong>Set Dirac Slot</strong>, which invites picking the
+      wrong one in a program. Neither name had shipped, so no existing programming was affected.</li>
+</ul>
+
+<h3>1.0.3 &nbsp;<span class="meta">(driver 103)</span></h3>
+<ul>
+  <li><strong>Fixed:</strong> all three Composer actions were dead and said nothing about it.
+      Composer's Actions tab sends the literal <code>LUA_ACTION</code> with the action name in the
+      parameters, not the action's own command; the driver found no handler and returned in
+      silence. An unrecognised action now prints instead of failing quietly.</li>
+</ul>
+
+<h3>1.0.2 &nbsp;<span class="meta">(driver 102)</span></h3>
+<ul>
+  <li>Seventeen read-only variables covering connection, power, input, volume, decode and video
+      state.</li>
+  <li>Six events: Connected, Disconnected, Powered On, Powered Off, Input Changed, Surround Mode
+      Changed.</li>
+  <li>Input labels — the unit's own names for its inputs, shown wherever an input is reported.</li>
+  <li><strong>Removed:</strong> the <code>Adopt Input Labels</code> property, which promised
+      something the platform cannot do — a driver cannot rename its own Control4 connections.
+      The <strong>Print Input Labels</strong> action replaces it: it lists what the unit calls each
+      input so you can rename the connections yourself.</li>
+</ul>
+
+<h3>1.0.1 &nbsp;<span class="meta">(driver 101)</span></h3>
+<ul>
+  <li><strong>Fixed:</strong> adding the driver to a room silently claimed every endpoint in it,
+      volume included, before anyone chose to give it any. It now claims nothing and waits to be
+      assigned.</li>
+  <li><strong>Fixed:</strong> <code>Firmware Version</code> reported an internal component version
+      under a label that read like the release you would recognise. Split into
+      <strong>System Software Version</strong> and <strong>AV Controller Version</strong>.</li>
+  <li><strong>Power Off Action</strong> gained a <em>Do Nothing</em> option, for a processor meant
+      to stay powered.</li>
+</ul>
+
+<h3>1.0.0 &nbsp;<span class="meta">(driver 100)</span></h3>
+<ul>
+  <li>First release. Connection, power, input selection, volume and mute over the unit's local
+      WebSocket interface, as a Control4 <code>receiver</code>.</li>
+  <li>Listening-mode selection across all seven upmixers, as Control4 surround modes.</li>
+</ul>
 
 <footer>
   This driver talks to the unit over its local WebSocket interface and needs no cloud account,

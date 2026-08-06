@@ -5,8 +5,8 @@
 	<name>Monolith HTP-1</name>
 	<model>HTP-1</model>
 	<created>08/04/2026 12:00</created>
-	<modified>08/04/2026 12:00</modified>
-	<version>105</version>
+	<modified>08/06/2026 12:00</modified>
+	<version>106</version>
 	<auto_update>false</auto_update>
 	<!-- Deliberately empty, overriding the receiver proxy's own roomAutoBind.
 	     That proxy claims AudioSelectionDevice, AudioVolumeDevice,
@@ -274,10 +274,57 @@
 			</command>
 		</commands>
 	</config>
+	<!-- Icons. Paths are relative to www/ INSIDE the archive, not to the archive
+	     root: small_image="icons/device_sm.png" resolves to www/icons/device_sm.png.
+	     That held for all 195 image references across the local driver library,
+	     without exception, and getting it wrong is silent - Composer just keeps
+	     showing the stock icon.
+
+	     Declared in both places on purpose. The proxy attributes and the
+	     <small>/<large> elements below are separate declaration sites, and the
+	     shipped drivers that carry icons overwhelmingly set both. Without them
+	     this driver inherits the receiver proxy's built-in devices_sm/receiver.gif;
+	     there is no override flag, presence is the override. -->
 	<proxies>
-		<proxy proxybindingid="5001" primary="True" name="Monolith HTP-1">receiver</proxy>
+		<proxy proxybindingid="5001" primary="True" name="Monolith HTP-1"
+		       image_source="c4z"
+		       small_image="icons/device_sm.png"
+		       large_image="icons/device_lg.png">receiver</proxy>
 	</proxies>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
 	<capabilities>
+		<!-- The Navigator/touchscreen icon, at the five sizes every first-party
+		     driver ships. The controller:// path segment MUST be the .c4z file
+		     name without its extension, matched case-sensitively - Monolith.HTP1
+		     here - because that is how the controller resolves the driver's own
+		     web root.
+
+		     THIS DOES NOT RENDER FOR THIS DRIVER, and it is worth being exact
+		     rather than hopeful about why. Drivers\Control\receiver.c4d.dll
+		     contains neither "navigator_display_option" nor "display_icons";
+		     uibutton.c4d.dll is the only binary in the runtime that reads
+		     display_icons at all. Across the whole local library the element is
+		     declared by uibutton, media_service, thermostatV2, media_player and
+		     amplifier proxies - and by no receiver, ever. That is consistent
+		     with a receiver having no Navigator tile of its own: it is an AV
+		     path and volume device, not a selectable source.
+
+		     Kept anyway, deliberately. The block is inert - <capabilities>
+		     carries no schema, and a key nothing reads cannot break anything -
+		     it is a byte-for-byte match for the shape shipped drivers use, and
+		     it is already correct for the day this driver grows a device type
+		     that does show a tile. The Composer tree icon above is the one that
+		     actually renders today. -->
+		<navigator_display_option proxybindingid="5001">
+			<display_icons>
+				<Icon width="70"   height="70">controller://driver/Monolith.HTP1/icons/device/experience_70.png</Icon>
+				<Icon width="90"   height="90">controller://driver/Monolith.HTP1/icons/device/experience_90.png</Icon>
+				<Icon width="300"  height="300">controller://driver/Monolith.HTP1/icons/device/experience_300.png</Icon>
+				<Icon width="512"  height="512">controller://driver/Monolith.HTP1/icons/device/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/Monolith.HTP1/icons/device/experience_1024.png</Icon>
+			</display_icons>
+		</navigator_display_option>
 		<audio_consumer_count>20</audio_consumer_count>
 		<audio_provider_count>1</audio_provider_count>
 		<video_consumer_count>9</video_consumer_count>
