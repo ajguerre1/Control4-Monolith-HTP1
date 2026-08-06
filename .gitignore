@@ -10,3 +10,10 @@ luac.out
 # Captured device state — contains input labels and the unit's name
 mso_*.json
 *.capture.json
+
+# Python bytecode. A .pyc embeds the ABSOLUTE PATH of its source at compile
+# time, so committing one publishes the build machine's username and
+# directory layout. tools/ is dev-only and never packaged, but this still must
+# not be tracked.
+__pycache__/
+*.pyc
