@@ -6,7 +6,7 @@
 	<model>HTP-1</model>
 	<created>08/04/2026 12:00</created>
 	<modified>08/04/2026 12:00</modified>
-	<version>104</version>
+	<version>105</version>
 	<auto_update>false</auto_update>
 	<!-- Deliberately empty, overriding the receiver proxy's own roomAutoBind.
 	     That proxy claims AudioSelectionDevice, AudioVolumeDevice,
@@ -133,11 +133,16 @@
 			<!-- Also runtime-populated: the macros this unit actually stores,
 			     under the names its owner gave them. Slots with nothing stored
 			     in them are left out. Selecting one only selects it; the Run
-			     Selected Macro action below is what runs it. -->
+			     Selected Macro action below is what runs it.
+
+			     The default is the same "(none)" entry the driver keeps at the
+			     top of the list at runtime, so the property reads the same
+			     before the unit has ever been heard from as it does after a
+			     selected macro is deleted: nothing selected, nothing to run. -->
 			<property>
 				<name>Macro</name>
 				<type>DYNAMIC_LIST</type>
-				<default></default>
+				<default>(none)</default>
 				<readonly>false</readonly>
 			</property>
 		</properties>

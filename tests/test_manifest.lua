@@ -105,6 +105,21 @@ return {
         end,
     },
     {
+        name = "the Macro property defaults to the same sentinel the driver keeps in its list",
+        fn = function()
+            -- A fresh install must read the same as one whose chosen macro was
+            -- deleted: nothing selected. If this default drifted from the
+            -- driver's own sentinel, an install that had never seen the unit
+            -- would show a selection the driver would refuse to run, with no
+            -- entry in the list matching it.
+            local xml = readManifest()
+            local block = xml:match("<name>Macro</name>(.-)</property>")
+            H.isTrue(block ~= nil, "the Macro property should be declared")
+            H.equal(block:match("<default>(.-)</default>"), "(none)")
+            H.isTrue(block:find("<type>DYNAMIC_LIST</type>", 1, true) ~= nil)
+        end,
+    },
+    {
         name = "power off offers a do-nothing option",
         fn = function()
             -- For a processor meant to stay powered, so a room turning off or a
