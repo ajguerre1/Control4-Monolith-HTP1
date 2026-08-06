@@ -122,4 +122,8 @@ The full list, with every review finding and its disposition, is in
 
 ## Licence
 
-Not yet chosen — no licence file, so default copyright applies and all rights are reserved.
+[MIT](LICENSE). Use it, change it, ship it; keep the copyright notice.
+
+The Monolith name and logo are Monoprice's. `assets/monolith-logo.png` is included so the driver's
+icons can be regenerated from source, and is used only to identify the product this driver controls.
+This project is not affiliated with or endorsed by Monoprice.
