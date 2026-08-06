@@ -813,8 +813,8 @@ return {
             -- reach the unit with a nil mode.
             loadDriver()
             goLive()
-            for _, command in ipairs({ "Set Dirac", "Set Night Mode", "Set Bass Enhance",
-                                        "Run Macro" }) do
+            for _, command in ipairs({ "Set Dirac Processing", "Set Night Mode",
+                                        "Set Bass Enhance", "Run Macro" }) do
                 mock.clearCalls()
                 ExecuteCommand(command, {})
                 mock.advance(50)
@@ -822,8 +822,18 @@ return {
                     H.isTrue(raw:find("changemso", 1, true) == nil,
                         command .. " with no parameter must not write")
                 end
+                -- A name this driver does not have would also "not write", and
+                -- would pass this test while covering nothing at all.
+                for _, line in ipairs(mock.printed) do
+                    H.isTrue(line:find("no handler for action", 1, true) == nil,
+                        command .. " is not a command this driver has: " .. line)
+                end
+                -- INSIDE the loop: mock.clearCalls() above wipes mock.printed
+                -- every iteration, so an assertion after the loop can only ever
+                -- see the last command -- and a missing guard on any of the
+                -- others would slip through, which is exactly what happened.
+                H.assertNoErrorLog()
             end
-            H.assertNoErrorLog()
         end,
     },
     {
@@ -849,7 +859,6 @@ return {
                 if name then table.insert(names, name) end
             end
             H.isTrue(#names >= 6, "expected the declared commands, found " .. #names)
-            H.isTrue(#names >= 6, "expected the declared commands, found " .. #names)
 
             loadDriver()
             goLive()
@@ -865,12 +874,12 @@ return {
         end,
     },
     {
-        name = "Set Dirac writes /cal/diracactive with the chosen mode",
+        name = "Set Dirac Processing writes /cal/diracactive with the chosen mode",
         fn = function()
             loadDriver()
             goLive()
             mock.clearCalls()
-            ExecuteCommand("Set Dirac", { Mode = "Bypass" })
+            ExecuteCommand("Set Dirac Processing", { Mode = "Bypass" })
             mock.advance(50)
             local ops = lastWrittenOps()
             H.equal(ops[1].path, "/cal/diracactive")
@@ -997,7 +1006,7 @@ return {
             goLive()
 
             local cases = {
-                { "Set Dirac",          { Mode = "Loud" } },
+                { "Set Dirac Processing", { Mode = "Loud" } },
                 { "Set Night Mode",     { Mode = "Maximum" } },
                 { "Set Dialog Enhance", { Level = "7" } },
                 { "Set Dialog Enhance", { Level = "-1" } },
@@ -1218,6 +1227,52 @@ return {
         end,
     },
     {
+        name = "Run Selected Macro runs the entry that was picked, not a slot that shares its text",
+        fn = function()
+            -- The action never sees a slot key: Composer hands it the DISPLAY
+            -- TEXT of the entry the installer chose, and for that text is
+            -- authoritative by construction. Preferring a slot-key match runs a
+            -- different macro whenever an owner has named one after a slot key
+            -- -- which they are entitled to do.
+            loadDriver()
+            goLive()
+            pushUpdate("/svronly/macroNames/cmda", "cmdcustom1")
+            Properties["Macro"] = "cmdcustom1"
+
+            mock.clearCalls()
+            ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 2, "cmda is the first entry reading 'cmdcustom1', and what was picked")
+            local byPath = {}
+            for _, op in ipairs(ops) do byPath[op.path] = op.value end
+            H.equal(byPath["/volume"], -22)
+            H.equal(byPath["/dialogEnh"], 5)
+            H.equal(byPath["/muted"], nil, "the cmdcustom1 SLOT must not have run instead")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Run Macro still resolves a slot key ahead of a macro named after one",
+        fn = function()
+            -- The command's flexibility is deliberate and stays: a programmer
+            -- typing 'cmdcustom1' means the slot, which is the unambiguous
+            -- request, and is what survives the macro being renamed.
+            loadDriver()
+            goLive()
+            pushUpdate("/svronly/macroNames/cmda", "cmdcustom1")
+
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "cmdcustom1" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 1, "the slot key wins where the two could collide")
+            H.equal(ops[1].path, "/muted")
+            H.equal(ops[1].value, true)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
         name = "a macro touching one path twice sends only the later value",
         fn = function()
             loadDriver()
@@ -1265,7 +1320,82 @@ return {
             H.count(ops, 1, "only the one well-formed operation may reach the unit")
             H.equal(ops[1].path, "/night")
             H.equal(ops[1].value, "auto")
-            H.assertNoErrorLog()
+            -- NOT H.assertNoErrorLog(): skipping four of five stored entries is
+            -- now reported at the always-written level on purpose, because the
+            -- macro did not run in full. Asserting the report is strictly more
+            -- than asserting silence was -- silence here was the defect.
+            H.isTrue(loggedContaining("ran 1 of 5 stored entries"),
+                "the four skipped entries must be reported, not passed over quietly")
+        end,
+    },
+    {
+        name = "a stored guard or add is not sent; only the replace reaches the unit",
+        fn = function()
+            -- Only `replace` survives ingest, because only `replace` is what the
+            -- write path sends. A stored `test` is a guard the unit evaluates --
+            -- replaying it as a replace would MUTE the room -- and an `add`
+            -- would arrive as a replace on a member the unit does not have,
+            -- which it rejects wholesale.
+            loadDriver()
+            goLive()
+            sendFrame("msoupdate " .. JSON:encode({
+                { op = "replace", path = "/svronly/preset2", value = {
+                    { op = "test",    path = "/muted",        value = true },
+                    { op = "add",     path = "/upmix/select", value = "auro" },
+                    { op = "replace", path = "/night",        value = "auto" },
+                } },
+            }))
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "preset2" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 1, "only the replace may reach the unit")
+            H.equal(ops[1].path, "/night")
+            H.equal(ops[1].value, "auto")
+        end,
+    },
+    {
+        name = "a slot storing only non-replace entries is not offered and runs nothing",
+        fn = function()
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            sendFrame("msoupdate " .. JSON:encode({
+                { op = "replace", path = "/svronly/preset3", value = {
+                    { op = "test", path = "/muted", value = true },
+                } },
+            }))
+            H.equal(lastPropertyList("Macro"), nil,
+                "a slot with nothing replayable never enters the picker")
+
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "preset3" })
+            mock.advance(50)
+            H.equal(changeMsoCount(), 0, "a guard must never be executed as a setting")
+            H.equal(lastWrittenOps(), nil)
+            H.isTrue(loggedContaining("ran 0 of 1 stored entries"),
+                "and a macro that did nothing at all must not look like one that ran")
+        end,
+    },
+    {
+        name = "a macro that could not run in full says so with Debug Mode off",
+        fn = function()
+            -- Off is the SHIPPING DEFAULT, and a macro that under-runs is
+            -- exactly the case that must not be hidden behind a debug switch:
+            -- the owner pressed one button and got part of what they saved.
+            loadDriver()
+            H.equal(Properties["Debug Mode"], "Off")
+            goLive()
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "cmdd" })
+            mock.advance(50)
+
+            local ops = lastWrittenOps()
+            H.count(ops, 1, "the one replayable operation still runs")
+            H.isTrue(loggedContaining("ran 1 of 5 stored entries"),
+                "the installer is told how much of the macro did not run")
+            H.isTrue(loggedContaining("ErrorLog:"),
+                "reported at the one level this logger always writes")
         end,
     },
     {
@@ -1341,6 +1471,33 @@ return {
             H.equal(last.args[3], "Preset 1",
                 "the installer's selection survives a repopulation")
             H.equal(lastWrittenOps(), nil, "a push must never turn into a write")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a macro deleted on the unit leaves the list and stops running",
+        fn = function()
+            -- A re-read is a complete document, so a slot it no longer carries
+            -- is a slot the owner deleted. Leaving it runnable would put the
+            -- owner's old operations on the wire long after they removed them.
+            loadDriver()
+            goLive()
+            local F = require("tests.fixtures")
+            local doc = F.modern()
+            doc.svronly.cmda = nil
+            doc.svronly.macroNames.cmda = nil
+
+            mock.clearCalls()
+            sendFrame("mso " .. JSON:encode(doc))
+            local last = lastPropertyList("Macro")
+            H.isTrue(last ~= nil, "the picker has to lose the entry")
+            H.equal(last.args[2], "Listening,cmdd,Preset 1,cmdcustom1")
+
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "Movie Night" })
+            mock.advance(50)
+            H.equal(changeMsoCount(), 0, "a deleted macro must not still reach the unit")
+            H.equal(lastWrittenOps(), nil)
             H.assertNoErrorLog()
         end,
     },

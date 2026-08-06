@@ -160,9 +160,14 @@ return {
             local doc = handle:read("*a")
             handle:close()
 
+            -- Each name must have ITS OWN documented entry -- the leading cell
+            -- of a row in one of the tables above -- not merely appear
+            -- somewhere in the prose. A substring match let the `Macro`
+            -- property be satisfied by the unrelated words "Run Macro", so the
+            -- property could go entirely undocumented with this test green.
             local missing = {}
             local function require_(name, kind)
-                if not doc:find(name, 1, true) then
+                if not doc:find('<td class="name">' .. name .. "</td>", 1, true) then
                     table.insert(missing, kind .. " " .. name)
                 end
             end
@@ -181,6 +186,27 @@ return {
             for _, name in ipairs(loadVariableNames()) do require_(name, "variable") end
 
             H.equal(#missing, 0, "undocumented: " .. table.concat(missing, ", "))
+        end,
+    },
+    {
+        name = "the documentation does not promise that a macro always runs in full",
+        fn = function()
+            -- Both retired claims were true only of the empty and unknown cases
+            -- they were written for. A slot storing an entry this driver cannot
+            -- replay DOES under-run, and the Documentation tab is the one place
+            -- an installer looks before believing otherwise.
+            local xml = readManifest()
+            local file = xml:match('<documentation%s+file%s*=%s*"([^"]+)"')
+            local handle = assert(io.open(file, "r"))
+            local doc = handle:read("*a")
+            handle:close()
+
+            H.equal(doc:find("sends it as it stands", 1, true), nil,
+                "the driver sends the replayable entries, not the slot as it stands")
+            H.equal(doc:find("never a half-run macro", 1, true), nil,
+                "an unqualified promise this driver cannot keep")
+            H.isTrue(doc:find("<code>replace</code>", 1, true) ~= nil,
+                "the one entry kind that is replayed should be named outright")
         end,
     },
     {
@@ -328,15 +354,30 @@ return {
         end,
     },
     {
-        name = "the Run Selected Macro action is declared with the command the Lua dispatches on",
+        name = "the Run Selected Macro action carries its dispatch token in the same block",
         fn = function()
             -- Composer's Actions tab sends the literal "LUA_ACTION" with this
-            -- <command> in tParams.ACTION; a mismatch is a silent no-op.
+            -- <command> in tParams.ACTION, so the pairing is what matters.
+            -- Grepping the whole manifest for the two strings separately does
+            -- not check the pairing at all: it stays green with the name in one
+            -- <action> and the token in another, which is a shape that runs the
+            -- WRONG action rather than none. Read the block, then read the
+            -- token out of it.
+            --
+            -- That the token then reaches a handler is proven end to end, the
+            -- way Composer actually invokes it, by "every action declared in
+            -- driver.xml runs when Composer invokes it" in tests/test_driver.lua.
+            -- Not duplicated here.
             local xml = readManifest()
-            H.isTrue(xml:find("<name>Run Selected Macro</name>", 1, true) ~= nil,
-                "the action should be declared")
-            H.isTrue(xml:find("<command>RUN_SELECTED_MACRO</command>", 1, true) ~= nil,
-                "with the dispatch token driver.lua's ACTIONS table keys on")
+            local block
+            for candidate in xml:gmatch("<action>(.-)</action>") do
+                if candidate:match("<name>%s*(.-)%s*</name>") == "Run Selected Macro" then
+                    block = candidate
+                end
+            end
+            H.isTrue(block ~= nil, "the action should be declared")
+            H.equal(block:match("<command>%s*(.-)%s*</command>"), "RUN_SELECTED_MACRO",
+                "the dispatch token driver.lua's ACTIONS table keys on, in this action's block")
         end,
     },
     {
@@ -409,7 +450,10 @@ return {
         fn = function()
             local xml = readManifest()
             local names = parseCommands(xml)
-            local expected = { "Set Dirac", "Set Night Mode", "Set Dialog Enhance",
+            -- "Set Dirac Processing", not "Set Dirac": it sits beside "Set Dirac
+            -- Slot" in a programming dropdown, and one name being a strict
+            -- prefix of the other made the wrong pick invisible.
+            local expected = { "Set Dirac Processing", "Set Night Mode", "Set Dialog Enhance",
                                 "Set Bass Enhance", "Toggle Bass Enhance", "Set Lip Sync Delay",
                                 "Set Dirac Slot", "Run Macro" }
             H.equal(#names, #expected, "expected exactly the eight declared commands")
@@ -433,13 +477,13 @@ return {
                 return items
             end
 
-            local diracBlock = assert(commandBlock("Set Dirac"))
+            local diracBlock = assert(commandBlock("Set Dirac Processing"))
             H.isTrue(diracBlock:find("<name>Mode</name>", 1, true) ~= nil)
             H.isTrue(diracBlock:find("<type>LIST</type>", 1, true) ~= nil)
             local diracItems = listItems(diracBlock)
             H.equal(#diracItems, 3)
             for i, item in ipairs({ "Off", "On", "Bypass" }) do
-                H.equal(diracItems[i], item, "Set Dirac item " .. i)
+                H.equal(diracItems[i], item, "Set Dirac Processing item " .. i)
             end
 
             local nightBlock = assert(commandBlock("Set Night Mode"))

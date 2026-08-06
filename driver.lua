@@ -321,10 +321,12 @@ local function updateMacroProperty()
     C4:UpdatePropertyList("Macro", table.concat(items, ","), kept or items[1])
 end
 
--- Accepts the unit's own name for a macro, the text shown in the list, or the
--- slot key. A programmer typing a name is the likely case; a slot key is the
--- unambiguous one, so it wins where the two could collide. Two macros sharing
--- one name resolve to the earlier slot -- arbitrary, but deterministic.
+-- For the Run Macro COMMAND, where a programmer typed the request: accepts the
+-- unit's own name for a macro, the text shown in the list, or the slot key. A
+-- name is the likely case; a slot key is the unambiguous one, so it wins where
+-- the two could collide -- an owner may name a macro "cmdcustom1", and someone
+-- typing that string into programming means the slot. Two macros sharing one
+-- name resolve to the earlier slot -- arbitrary, but deterministic.
 local function resolveMacroSlot(request)
     if type(request) ~= "string" or request == "" then return nil end
     local byKey, byName, byText
@@ -339,26 +341,61 @@ local function resolveMacroSlot(request)
     return byKey or byName or byText
 end
 
+-- For the Run Selected Macro ACTION, which has something different in hand: not
+-- a typed request but the DISPLAY TEXT of an entry this driver itself put in
+-- the list. For that, text is authoritative by construction -- it is the only
+-- thing Composer can hand back -- so matching anything else can only pick a
+-- different macro than the one shown. Same slot order and same first-match rule
+-- as macroItems(), so the Nth entry in the list resolves to the Nth listed slot.
+local function resolveMacroByListedText(text)
+    if type(text) ~= "string" or text == "" then return nil end
+    for _, slot in ipairs(State.MACRO_SLOTS) do
+        local entry = DRIVER.state.macros[slot]
+        if entry and #entry.ops > 0 and macroEntryText(slot, entry.name) == text then
+            return slot
+        end
+    end
+    return nil
+end
+
 -- REPLAYS THE OWNER'S OWN STORED INTENT, and that is worth saying out loud:
 -- this is the one place the driver sends paths it did not choose. A macro can
 -- touch anything the unit's own web client can, and second-guessing which of
 -- those paths are allowed would break the owner's own macro for no benefit --
 -- the unit remains the authority on what it will accept. What the driver will
--- not do is forward an entry that is not an operation (htp1/state.lua drops
--- those on the way in) or send an empty changemso, which this codec would
--- encode as {} rather than [] and the unit would reject outright.
+-- not do is forward an entry it cannot replay -- htp1/state.lua keeps only
+-- `replace` on the way in, because that is the only kind this write path can
+-- send -- or send an empty changemso, which this codec would encode as {}
+-- rather than [] and the unit would reject outright. Skipping is not silent:
+-- how many entries a slot lost is counted at ingest and reported below.
 --
 -- Session:write is the right tool, and no batch call is needed: writes queue by
 -- path and flush together 50 ms later, so every path a macro touches goes out
 -- in ONE changemso, and a macro touching one path twice sends only the later
 -- value -- sending both would be a write the second immediately overwrites.
-local function runMacro(request, label)
-    local slot = resolveMacroSlot(request)
+local function runMacro(request, label, resolve)
+    local slot = (resolve or resolveMacroSlot)(request)
     if not slot then
         DRIVER.log:debug(label .. ": no macro named", tostring(request))
         return
     end
-    local ops = DRIVER.state.macros[slot].ops
+    local entry = DRIVER.state.macros[slot]
+    local ops, dropped = entry.ops, entry.dropped or 0
+
+    -- DELIBERATELY NOT behind Debug Mode, unlike every other line in here. The
+    -- shipping default is Off, and a macro that ran in part is precisely what an
+    -- owner cannot notice on their own: one button, and some of what they saved.
+    -- `error` is this logger's only always-written level, so it is the one an
+    -- installer actually sees -- no new level invented for one message. The slot
+    -- key is a fixed name of the unit's own; the macro's NAME is site data and
+    -- stays out of a log that leaves this machine.
+    if dropped > 0 then
+        DRIVER.log:error(label .. ": macro " .. slot .. " ran " .. #ops .. " of " ..
+            (#ops + dropped) .. " stored entries -- the rest are entries this driver " ..
+            "cannot replay. Only `replace` operations are sent: the write path sends " ..
+            "values, so it cannot express a delete.")
+    end
+
     if #ops == 0 then
         DRIVER.log:debug(label .. ": macro", slot, "has no stored operations to replay")
         return
@@ -570,9 +607,10 @@ local ACTIONS = {
     REFRESH_FROM_DEVICE = function() DRIVER.session:refresh() end,
     -- Runs whatever the Macro property currently shows. Reading the property
     -- here rather than caching a selection keeps one source of truth: Composer
-    -- owns what the installer chose.
+    -- owns what the installer chose. Resolved BY THAT TEXT, because the text is
+    -- all this action has and all Composer can give it.
     RUN_SELECTED_MACRO = function()
-        runMacro(Properties["Macro"], "Run Selected Macro")
+        runMacro(Properties["Macro"], "Run Selected Macro", resolveMacroByListedText)
     end,
     PRINT_STATE = function()
         print("HTP-1 state:")
@@ -637,10 +675,16 @@ local ONOFF_MODES = { Off = "off", On = "on" }
 
 local PROGRAMMING_COMMANDS = {}
 
-PROGRAMMING_COMMANDS["Set Dirac"] = function(params)
+-- Named "Set Dirac Processing" rather than "Set Dirac" because "Set Dirac Slot"
+-- exists too: one turns Dirac on, off or into bypass, the other picks which
+-- calibrated filter it runs. A name that is a strict prefix of another names
+-- nothing in a programming dropdown -- and both commands are new in this
+-- release, so this is the last moment the rename costs an installed program
+-- nothing.
+PROGRAMMING_COMMANDS["Set Dirac Processing"] = function(params)
     local value = DIRAC_MODES[params.Mode]
     if not value then
-        DRIVER.log:debug("Set Dirac: unrecognised Mode", tostring(params.Mode))
+        DRIVER.log:debug("Set Dirac Processing: unrecognised Mode", tostring(params.Mode))
         return
     end
     DRIVER.session:write("/cal/diracactive", value)

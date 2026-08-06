@@ -160,8 +160,13 @@
 			</action>
 		</actions>
 		<commands>
+			<!-- "Set Dirac Processing", not "Set Dirac": in a Composer program
+			     this sits next to "Set Dirac Slot" below, and a name that is a
+			     strict prefix of the other is a mis-click nobody sees. One turns
+			     Dirac on and off, the other chooses which filter it uses; each
+			     name now says which. -->
 			<command>
-				<name>Set Dirac</name>
+				<name>Set Dirac Processing</name>
 				<description>Set NAME's Dirac Live processing to PARAM1.</description>
 				<params>
 					<param>

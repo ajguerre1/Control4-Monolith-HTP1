@@ -82,7 +82,7 @@ State fields to add, all from paths the unit already pushes:
 
 | Command | Param |
 |---|---|
-| Set Dirac | LIST: Off / On / Bypass |
+| Set Dirac Processing | LIST: Off / On / Bypass — planned as "Set Dirac", renamed before release so it does not read as a prefix of Task 3's "Set Dirac Slot" |
 | Set Night Mode | LIST: Off / Auto / On |
 | Set Dialog Enhance | RANGED_INTEGER 0–6 |
 | Set Bass Enhance | LIST: Off / On |

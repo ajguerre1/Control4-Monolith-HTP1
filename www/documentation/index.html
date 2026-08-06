@@ -184,7 +184,22 @@
   <code>cmdcustom1</code>&ndash;<code>cmdcustom16</code>), and running one means sending those same
   changes back — which is exactly what the unit's own web interface does. Creating, editing, renaming
   and deleting macros belong to the unit's own UI, and this driver deliberately offers none of them.
-  Whatever is in a slot is the owner's own stored intent, so the driver sends it as it stands.
+  Whatever is in a slot is the owner's own stored intent, and the driver passes it through without
+  second-guessing which settings a macro is allowed to touch.
+</div>
+<div class="note">
+  <strong>Only <code>replace</code> entries are replayed.</strong>
+  A macro slot holds a list of change entries, and this driver sends back the <code>replace</code>
+  ones — a path and the value to put there. It skips every other kind. A <code>test</code> entry is a
+  condition the unit evaluates, not a change, and sending it as a change would <em>apply</em> it; an
+  <code>add</code> would arrive as a change to something that does not exist yet, which the unit
+  rejects outright, taking the rest of the macro with it. A <code>remove</code> cannot be expressed at
+  all: this driver's write path sends values, and a delete is the absence of one.
+  <br><br>
+  Macros saved from the unit's own UI are normally all <code>replace</code>, so this usually costs
+  nothing. When it does not, the driver says so in the Director log — <em>ran 3 of 5 stored
+  entries</em> — whatever Debug Mode is set to, because a macro that ran in part is not something you
+  would otherwise notice.
 </div>
 
 <h2>Actions</h2>
@@ -220,8 +235,9 @@
 </p>
 <table>
   <tr><th>Command</th><th>Parameter</th><th>What it does</th></tr>
-  <tr><td class="name">Set Dirac</td><td class="mono">Mode: Off / On / Bypass</td>
-      <td>Sets Dirac Live processing.</td></tr>
+  <tr><td class="name">Set Dirac Processing</td><td class="mono">Mode: Off / On / Bypass</td>
+      <td>Turns Dirac Live processing on, off, or into bypass. Which calibrated filter it runs is
+          <strong>Set Dirac Slot</strong> below, or the <strong>Dirac Filter</strong> property.</td></tr>
   <tr><td class="name">Set Night Mode</td><td class="mono">Mode: Off / Auto / On</td>
       <td>Sets night mode, which compresses dynamic range for quiet-hours listening.</td></tr>
   <tr><td class="name">Set Dialog Enhance</td><td class="mono">Level: 0&ndash;6</td>
@@ -248,9 +264,11 @@
 <div class="note">
   <strong>An empty or unknown macro does nothing at all.</strong>
   A name that matches no macro, or a slot with nothing stored in it, earns a line on the Lua tab
-  (with Debug Mode on) and no message to the unit — never a half-run macro, and never an empty one
-  the unit would reject. The macro list in the <strong>Macro</strong> property is the reliable way to
-  see what a name has to match.
+  (with Debug Mode on) and no message to the unit at all — nothing partial is sent in either case,
+  and never an empty message the unit would reject. The macro list in the <strong>Macro</strong>
+  property is the reliable way to see what a name has to match. A slot that <em>does</em> hold
+  entries can still run in part, if some of them are kinds this driver cannot replay — see
+  <strong>Only <code>replace</code> entries are replayed</strong> above.
 </div>
 <div class="note">
   <strong>An out-of-range or unrecognised value is refused, not passed through.</strong>
@@ -281,7 +299,7 @@
   <tr><td class="name">VIDEO_RESOLUTION</td><td>e.g. <code>3840x2160p60Hz</code></td></tr>
   <tr><td class="name">VIDEO_COLORSPACE</td><td>e.g. <code>BT2020</code></td></tr>
   <tr><td class="name">VIDEO_HDR</td><td>e.g. <code>HDR10</code></td></tr>
-  <tr><td class="name">DIRAC_STATE</td><td><code>on</code> / <code>off</code> / <code>bypass</code> — set with the <strong>Set Dirac</strong> command</td></tr>
+  <tr><td class="name">DIRAC_STATE</td><td><code>on</code> / <code>off</code> / <code>bypass</code> — set with the <strong>Set Dirac Processing</strong> command</td></tr>
   <tr><td class="name">LOUDNESS</td><td><code>off</code> / <code>on</code> — always the unit's real state, including changes made on the unit itself</td></tr>
   <tr><td class="name">NIGHT_MODE</td><td><code>off</code> / <code>auto</code> / <code>on</code> — set with the <strong>Set Night Mode</strong> command</td></tr>
   <tr><td class="name">DIALOG_ENHANCE</td><td>0&ndash;6, e.g. <code>3</code> — set with the <strong>Set Dialog Enhance</strong> command</td></tr>

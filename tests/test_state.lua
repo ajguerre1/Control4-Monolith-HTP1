@@ -632,6 +632,66 @@ return {
         end,
     },
     {
+        name = "a stored entry whose kind is not `replace` is dropped on the way in",
+        fn = function()
+            -- The write path sends `replace` and only `replace`, so the stored
+            -- kind is not carried through to the wire. A `test` entry is a GUARD
+            -- ("only proceed if muted") and replaying it as a replace would
+            -- EXECUTE it -- muting the room. An `add` becomes a replace on a
+            -- member the unit does not have, which it rejects wholesale, so one
+            -- `add` would silently fail the entire macro.
+            local s = State.new()
+            s:applyOps({
+                { op = "replace", path = "/svronly/preset2", value = {
+                    { op = "test",    path = "/muted",        value = true },
+                    { op = "add",     path = "/upmix/select", value = "auro" },
+                    { op = "move",    path = "/volume",       value = -30 },
+                    { op = "copy",    path = "/volume",       value = -30 },
+                    { op = "replace", path = "/night",        value = "auto" },
+                } },
+            })
+            H.count(s.macros.preset2.ops, 1, "only the replace may be replayed")
+            H.equal(s.macros.preset2.ops[1].path, "/night")
+            H.equal(s.macros.preset2.ops[1].value, "auto")
+        end,
+    },
+    {
+        name = "the count of stored entries that cannot be replayed is kept with the slot",
+        fn = function()
+            -- Replaying a macro has to be able to say how much of it did not
+            -- run, and only ingest knows what it threw away.
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.equal(s.macros.cmda.dropped, 0, "everything stored in cmda is replayable")
+            H.equal(s.macros.cmdd.dropped, 4, "four of cmdd's five entries are not")
+
+            s:applyOps({
+                { op = "replace", path = "/svronly/preset2", value = {
+                    { op = "test",    path = "/muted", value = true },
+                    "not an operation at all",
+                    { op = "replace", path = "/night", value = "auto" },
+                } },
+            })
+            H.count(s.macros.preset2.ops, 1)
+            H.equal(s.macros.preset2.dropped, 2)
+        end,
+    },
+    {
+        name = "a slot holding nothing but non-replace entries holds no operations at all",
+        fn = function()
+            local s = State.new()
+            local changes = s:applyOps({
+                { op = "replace", path = "/svronly/preset3", value = {
+                    { op = "test", path = "/muted",             value = true },
+                    { op = "add",  path = "/svronly/cmdcustom9", value = {} },
+                } },
+            })
+            H.count(s.macros.preset3.ops, 0,
+                "nothing replayable is nothing to offer, so the picker leaves the slot out")
+            H.equal(changes.macros, nil, "and the picker has nothing to redraw")
+        end,
+    },
+    {
         name = "a key under /svronly that is not a macro slot is ignored",
         fn = function()
             -- /svronly is the unit's own scratch container and holds more than
@@ -662,6 +722,48 @@ return {
             H.equal(s.macros.cmdb.name, "Listening",
                 "a slot the push did not mention keeps what it had")
             H.count(s.macros.cmdb.ops, 2)
+        end,
+    },
+    {
+        name = "a full document drops a macro the unit no longer stores",
+        fn = function()
+            -- A getmso reply is COMPLETE, so absence in one is authoritative: a
+            -- macro deleted on the unit must stop being runnable from Control4,
+            -- not linger until the driver is reloaded.
+            local s = State.new()
+            s:applyDocument(F.modern())
+            H.count(s.macros.cmda.ops, 2)
+
+            local doc = F.modern()
+            doc.svronly.cmda = nil
+            doc.svronly.macroNames.cmda = nil
+            local changes = s:applyDocument(doc)
+            H.isTrue(changes.macros, "the picker loses an entry, so it has to redraw")
+            H.equal(s.macros.cmda, nil, "the deleted slot is gone, not stale")
+            H.count(s.macros.cmdb.ops, 2, "every slot the document still carries is untouched")
+            H.equal(s.macros.cmdb.name, "Listening")
+        end,
+    },
+    {
+        name = "a targeted /svronly push leaves the slots it does not mention alone",
+        fn = function()
+            -- The other half of the rule above: a targeted push is a fragment,
+            -- not a census, so absence in one is UNSPECIFIED -- the same
+            -- distinction _applyContainer already draws for every other
+            -- container it re-derives.
+            local s = State.new()
+            s:applyDocument(F.modern())
+            local changes = s:applyOps({
+                { op = "replace", path = "/svronly", value = {
+                    cmda = { { op = "replace", path = "/volume", value = -18 } },
+                } },
+            })
+            H.equal(changes.macros, nil, "cmda had operations and still has them")
+            H.count(s.macros.cmda.ops, 1)
+            H.equal(s.macros.cmda.ops[1].value, -18)
+            H.count(s.macros.cmdb.ops, 2, "a slot the push did not mention keeps what it had")
+            H.equal(s.macros.preset1.name, "Preset 1")
+            H.count(s.macros.cmdcustom1.ops, 1)
         end,
     },
     {

@@ -168,32 +168,46 @@ function State:_setDiracSlots(slots)
 end
 
 -- A stored entry counts as an operation only when it carries what replaying it
--- needs: a kind, a path to apply it to, and a value to apply. Anything else in
--- the array -- a bare string, a half-written entry, a `remove` with no value --
--- is dropped here rather than forwarded to the unit, because a driver that
--- blindly relays whatever it finds in a stored blob is one malformed macro away
--- from sending nonsense to a live processor.
+-- needs: the kind `replace`, a path to apply it to, and a value to apply.
+-- Anything else in the array -- a bare string, a half-written entry, or an entry
+-- of any other kind -- is dropped here rather than forwarded to the unit,
+-- because a driver that blindly relays whatever it finds in a stored blob is one
+-- malformed macro away from sending nonsense to a live processor.
+--
+-- EXACTLY ONE KIND IS REPLAYABLE, and the filter has to say so, because the
+-- write path does not carry the stored kind through: htp1/session.lua encodes
+-- every queued write as `replace`. So a stored `test` -- a guard meaning "only
+-- proceed if this path already holds this value" -- would go out as a replace
+-- and be EXECUTED, muting a room the owner only meant to check. A stored `add`
+-- would go out as a replace on a member that does not exist, which this unit
+-- rejects wholesale, so one `add` would silently fail the entire macro. Writing
+-- the other kinds properly means a write path that can send them, which is a
+-- wire shape this project has not verified; until then, not sending is the only
+-- honest option, and runMacro reports what it skipped.
 --
 -- Filtering on INGEST rather than at replay time is deliberate: it makes "this
 -- slot has operations" mean "this slot has operations this driver can replay",
 -- which is the question the picker asks when deciding whether to list a slot at
--- all.
+-- all. The count of what was dropped is returned alongside, so replaying a macro
+-- can say how much of it did not run.
 local function replayableOps(list)
-    local ops = {}
-    if type(list) ~= "table" then return ops end
+    local ops, dropped = {}, 0
+    if type(list) ~= "table" then return ops, dropped end
     for _, entry in ipairs(list) do
-        if type(entry) == "table" and type(entry.op) == "string"
+        if type(entry) == "table" and entry.op == "replace"
             and type(entry.path) == "string" and entry.value ~= nil then
             table.insert(ops, { op = entry.op, path = entry.path, value = entry.value })
+        else
+            dropped = dropped + 1
         end
     end
-    return ops
+    return ops, dropped
 end
 
 function State:_macroEntry(slot)
     local entry = self.macros[slot]
     if not entry then
-        entry = { ops = {} }
+        entry = { ops = {}, dropped = 0 }
         self.macros[slot] = entry
     end
     return entry
@@ -203,10 +217,14 @@ end
 -- say, when the slot gained or lost its operations. The picker lists names, not
 -- operations, so an owner editing a macro that stays non-empty stores its new
 -- operations without asking anything to redraw.
+--
+-- `entry.dropped` rides along and deliberately does NOT count as a change: how
+-- much of a macro this driver cannot replay is something the owner is told when
+-- they run it, not a reason to repaint a list.
 function State:_setMacroOps(slot, list)
     local entry = self:_macroEntry(slot)
     local had = #entry.ops > 0
-    entry.ops = replayableOps(list)
+    entry.ops, entry.dropped = replayableOps(list)
     return had ~= (#entry.ops > 0)
 end
 
@@ -227,15 +245,32 @@ function State:_setMacroNames(names)
     return changed
 end
 
--- A slot the container does not mention is left alone, not emptied -- the same
--- "absent is UNSPECIFIED, not cleared" rule _setInputs follows above. A partial
--- /svronly push would otherwise wipe every macro it happened not to carry.
-function State:_setMacros(svronly)
+-- `complete` says whether `svronly` is the container as carried by a WHOLE
+-- document, which is the one case where absence means deleted.
+--
+-- In a targeted /svronly push a slot the container does not mention is left
+-- alone, not emptied -- the same "absent is UNSPECIFIED, not cleared" rule
+-- _setInputs follows above, because a partial push would otherwise wipe every
+-- macro it happened not to carry.
+--
+-- A getmso reply is not partial. It is the unit's full state, so a slot it does
+-- not mention is a slot the owner deleted, and keeping it would leave a deleted
+-- macro listed in Composer and still runnable -- putting the owner's removed
+-- operations on the wire. The slot is dropped outright rather than emptied so
+-- that self.macros keeps holding only what the unit actually has.
+function State:_setMacros(svronly, complete)
     if type(svronly) ~= "table" then return false end
-    local changed = self:_setMacroNames(svronly.macroNames)
+    local names = svronly.macroNames
+    local changed = self:_setMacroNames(names)
     for _, slot in ipairs(MACRO_SLOTS) do
-        if svronly[slot] ~= nil and self:_setMacroOps(slot, svronly[slot]) then
-            changed = true
+        if svronly[slot] ~= nil then
+            if self:_setMacroOps(slot, svronly[slot]) then changed = true end
+        elseif complete and self.macros[slot]
+            and not (type(names) == "table" and names[slot] ~= nil) then
+            -- Mentioned by neither an operations array nor a name: gone.
+            local had = #self.macros[slot].ops > 0
+            self.macros[slot] = nil
+            if had then changed = true end
         end
     end
     return changed
@@ -284,13 +319,16 @@ function State:_applyContainer(prefix, value, changes)
     end
     if slots and self:_setDiracSlots(slots) then changes.diracSlots = true end
 
-    local svronly
+    -- The whole document is a census and a targeted push is a fragment, and the
+    -- macro container is the one place that distinction changes the outcome:
+    -- only a complete document can say a slot no longer exists.
+    local svronly, complete
     if prefix == "" then
-        svronly = value.svronly
+        svronly, complete = value.svronly, true
     elseif prefix == "/svronly" then
-        svronly = value
+        svronly, complete = value, false
     end
-    if svronly and self:_setMacros(svronly) then changes.macros = true end
+    if svronly and self:_setMacros(svronly, complete) then changes.macros = true end
 
     return changes
 end
@@ -324,7 +362,7 @@ local CONTAINER_PREFIXES = { "/cal", "/cal/slots", "/upmix", "/versions", "/inpu
 -- True when `path` is a tracked scalar, a tracked input sub-path, a macro slot
 -- or name, or a container holding any of them. Checked before any allocation,
 -- so the thousands of paths this driver ignores cost a few hash lookups, at
--- most two anchored matches and a handful of equality tests -- no allocation,
+-- most three anchored matches and a handful of equality tests -- no allocation,
 -- so a busy device stays cheap.
 local function isInteresting(path)
     if SCALAR_PATHS[path] then return "scalar" end
@@ -332,9 +370,10 @@ local function isInteresting(path)
     if path:match("^/inputs/[^/]+/label$") or path:match("^/inputs/[^/]+/visible$") then
         return "input"
     end
-    -- Gated on a substring compare so the thousands of paths that are not
-    -- macros pay one comparison, not three anchored matches.
-    if path:sub(1, 9) == "/svronly/" then
+    -- Gated on one anchored find so the thousands of paths that are not macros
+    -- pay a single test and, unlike a :sub() prefix compare, do not allocate a
+    -- throwaway string apiece to do it -- which is the promise two lines up.
+    if path:find("^/svronly/") then
         local rest = path:sub(10)
         if rest == "macroNames" then return "macroNames" end
         local named = rest:match("^macroNames/([^/]+)$")
