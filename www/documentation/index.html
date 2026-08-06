@@ -164,7 +164,13 @@
         <code>&lt;slot number&gt; - &lt;name&gt;</code>, using the same number as the
         <code>DIRAC_SLOT</code> variable, so a slot the owner never named still appears as, e.g.,
         <code>2 - Slot 2</code> rather than being left out. The list and the current selection
-        update on their own whenever the unit reports a change, from any source.</td>
+        update on their own whenever the unit reports a change, from any source.
+        <br><br>
+        The selection follows the <em>slot</em>, not the name: renaming the slot the unit is
+        currently using moves that entry's label and leaves it selected. The six slots are fixed
+        and cannot be deleted, so this property never has to fall back to a different filter — and
+        in the one case where it cannot say which is active, it shows nothing selected rather than
+        naming a filter that is not the one running.</td>
   </tr>
   <tr>
     <td class="name">Macro</td>
@@ -174,7 +180,22 @@
         out, because selecting it could only do nothing. A macro the owner never named appears under
         its slot key, e.g. <code>cmdcustom3</code>. Choosing an entry only selects it; nothing is sent
         to the unit until you run it. The list refreshes on its own when a macro is stored, renamed,
-        emptied or deleted on the unit.</td>
+        emptied or deleted on the unit.
+        <br><br>
+        The list always begins with <code>(none)</code>, and that entry does nothing. It is there so
+        that <strong>deleting the selected macro on the unit never promotes a different macro into
+        its place</strong> — the selection falls to <code>(none)</code> and
+        <strong>Run Selected Macro</strong> does nothing until you pick again. If the unit ends up
+        storing no macros at all, <code>(none)</code> is the whole list.
+        <br><br>
+        Your selection follows the <em>macro</em>, not the name it is shown under: renaming the
+        macro you selected — or renaming or adding any other — leaves your choice intact, so
+        programming built on <strong>Run Selected Macro</strong> keeps working across a rename on
+        the unit. Only deleting or emptying the macro you chose clears the selection.
+        <br><br>
+        One consequence worth knowing: a macro the owner names literally <code>(none)</code> is
+        listed under its slot key instead, e.g. <code>preset1</code>, so that it stays selectable
+        and cannot be confused with the empty entry.</td>
   </tr>
 </table>
 <div class="note">
@@ -216,8 +237,10 @@
           marked as such. Use it to decide what to rename your connections to.</td></tr>
   <tr><td class="name">Run Selected Macro</td>
       <td>Runs the macro chosen in the <strong>Macro</strong> property above, by sending the settings
-          it stores. Use it to try a macro from Composer before wiring it into programming. If the
-          slot turns out to be empty, nothing is sent and the Lua tab says so.</td></tr>
+          it stores. Use it to try a macro from Composer before wiring it into programming. With
+          <code>(none)</code> selected — which is what you get before you have chosen anything, and
+          after the macro you had chosen was deleted on the unit — nothing is sent and the Lua tab
+          says so. Same if the slot turns out to be empty.</td></tr>
   <tr><td class="name">Print Driver State</td>
       <td>Dumps the driver's current view of the unit. Useful when reporting a problem.</td></tr>
 </table>

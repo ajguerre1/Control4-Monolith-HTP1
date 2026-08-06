@@ -274,6 +274,16 @@ end
 -- does. Nothing here can create, edit, rename or delete a macro; the unit's own
 -- UI owns all of that.
 
+-- A real, always-present first entry that deliberately does nothing.
+--
+-- It exists because the driver cannot stop Composer falling back to the first
+-- item when the selected one is gone -- so the fix is to make the first item
+-- HARMLESS rather than to argue with the platform. A macro deleted on the unit
+-- must not promote a different macro into its place: an action that quietly
+-- starts running something else is worse than one that runs nothing, because
+-- nothing about the room announces which macro just fired.
+local MACRO_NONE = "(none)"
+
 -- What one slot reads as in Composer's list: the unit's own name for it,
 -- falling back to the slot key when the owner never named it.
 --
@@ -282,10 +292,21 @@ end
 -- arrive in Composer as two entries, neither of them selectable. The
 -- substitution is display-only: runMacro still accepts the unit's real name,
 -- commas and all.
+--
+-- A macro the owner named literally "(none)" also falls back to its slot key,
+-- for the same reason as the comma: an entry whose text collides with the
+-- sentinel would be a row the picker cannot tell from "nothing selected", so it
+-- would list twice and be unselectable. Under its slot key it stays reachable.
 local function macroEntryText(slot, name)
-    if name == nil or name == "" then return slot end
+    if name == nil or name == "" or name == MACRO_NONE then return slot end
     return (name:gsub(",", " "))
 end
+
+-- Forward declaration: updateMacroProperty below needs to resolve the text
+-- Composer persisted across a driver reload, and the resolver needs
+-- macroEntryText above. Declared here rather than reordering the file, so the
+-- two picker sections stay next to each other.
+local resolveMacroByListedText
 
 -- Only slots that actually hold operations. A slot the owner named but left
 -- empty is deliberately absent: it would look like a control and do nothing.
@@ -300,25 +321,46 @@ local function macroItems()
     return items
 end
 
--- Repopulates the whole list, like the Dirac picker above. The current
--- selection is KEPT where it still exists, so a rename on the unit -- or a new
--- macro appearing -- does not silently move the selection out from under the
--- Run Selected Macro action. Where the old selection is gone, or there never
--- was one, the first entry is chosen so the action always has something
--- determinate to run.
+-- Repopulates the whole list, like the Dirac picker above.
+--
+-- THE SELECTION IS KEPT BY SLOT, NOT BY THE TEXT SHOWN -- the same thing the
+-- Dirac picker gets right by construction, since its selection is an index. A
+-- macro renamed on the unit is still the macro the installer chose, so their
+-- Run Selected Macro programming must keep working across a rename; matching on
+-- display text would quietly drop the selection the moment the owner edited a
+-- name, and the installer would find their action doing nothing with no clue
+-- why. DRIVER.macroSlot is what makes that possible -- see OnPropertyChanged.
+--
+-- Where the chosen slot is GONE, the selection falls to MACRO_NONE and never to
+-- another macro: see that constant for why the sentinel is an entry rather than
+-- an empty string.
+--
+-- Populates even when the unit stores no macros at all, unlike the Dirac picker
+-- which leaves its property alone. The two differ because their empty states
+-- differ: Dirac's six slots always exist, so "nothing reported yet" only ever
+-- means the driver has not heard, and blanking a live picker on a momentary
+-- gap would be a lie. A unit with no macros, by contrast, genuinely has none,
+-- and a list of MACRO_NONE alone says exactly that.
 --
 -- No feedback loop to guard against here, unlike the Dirac picker: selecting a
 -- macro selects it and nothing more. Running one is an explicit action, so
 -- Composer echoing this call back as a property change cannot reach the unit.
 local function updateMacroProperty()
     local items = macroItems()
-    if #items == 0 then return end -- no macros stored; leave the property alone
-    local selected = Properties["Macro"]
-    local kept
-    for _, item in ipairs(items) do
-        if item == selected then kept = item end
-    end
-    C4:UpdatePropertyList("Macro", table.concat(items, ","), kept or items[1])
+
+    -- Nothing remembered means a fresh driver load: DRIVER.macroSlot is gone
+    -- but Composer still holds the text it persisted, so recover the slot from
+    -- that. This is the one moment text matching is right -- nothing can have
+    -- been renamed while the driver was not running to see it.
+    local slot = DRIVER.macroSlot
+    if slot == nil then slot = resolveMacroByListedText(Properties["Macro"]) end
+
+    local entry = slot and DRIVER.state.macros[slot]
+    local kept = (entry and #entry.ops > 0) and macroEntryText(slot, entry.name) or nil
+    DRIVER.macroSlot = kept and slot or nil
+
+    table.insert(items, 1, MACRO_NONE)
+    C4:UpdatePropertyList("Macro", table.concat(items, ","), kept or MACRO_NONE)
 end
 
 -- For the Run Macro COMMAND, where a programmer typed the request: accepts the
@@ -329,6 +371,7 @@ end
 -- name resolve to the earlier slot -- arbitrary, but deterministic.
 local function resolveMacroSlot(request)
     if type(request) ~= "string" or request == "" then return nil end
+    if request == MACRO_NONE then return nil end
     local byKey, byName, byText
     for _, slot in ipairs(State.MACRO_SLOTS) do
         local entry = DRIVER.state.macros[slot]
@@ -347,8 +390,16 @@ end
 -- thing Composer can hand back -- so matching anything else can only pick a
 -- different macro than the one shown. Same slot order and same first-match rule
 -- as macroItems(), so the Nth entry in the list resolves to the Nth listed slot.
-local function resolveMacroByListedText(text)
+function resolveMacroByListedText(text)   -- forward-declared local, above
     if type(text) ~= "string" or text == "" then return nil end
+    -- Belt and braces, and deliberately kept as such: macroEntryText can no
+    -- longer return the sentinel for any slot, so the loop below would return
+    -- nil here anyway and no test can distinguish this line's presence. It
+    -- stays because it states the rule locally -- the sentinel is not a macro
+    -- -- rather than leaving it to hold only as long as a function three
+    -- sections away keeps its collision fallback. The command's counterpart in
+    -- resolveMacroSlot IS load-bearing: that one also matches raw names.
+    if text == MACRO_NONE then return nil end
     for _, slot in ipairs(State.MACRO_SLOTS) do
         local entry = DRIVER.state.macros[slot]
         if entry and #entry.ops > 0 and macroEntryText(slot, entry.name) == text then
@@ -376,7 +427,20 @@ end
 local function runMacro(request, label, resolve)
     local slot = (resolve or resolveMacroSlot)(request)
     if not slot then
-        DRIVER.log:debug(label .. ": no macro named", tostring(request))
+        -- "Nothing was asked for" is a different report from "what you asked
+        -- for is not there", and the wording has to suit the caller: the action
+        -- has a SELECTION, the command has a typed parameter. Telling a
+        -- programmer that "no macro is selected" would send them looking at a
+        -- property they were not using.
+        if request == nil or request == "" or request == MACRO_NONE then
+            if resolve == resolveMacroByListedText then
+                DRIVER.log:debug(label .. ": no macro is selected, so nothing was run")
+            else
+                DRIVER.log:debug(label .. ": no macro was given, so nothing was run")
+            end
+        else
+            DRIVER.log:debug(label .. ": no macro named", tostring(request))
+        end
         return
     end
     local entry = DRIVER.state.macros[slot]
@@ -593,6 +657,15 @@ local PROPERTY_HANDLERS = {
             return
         end
         DRIVER.session:write("/cal/currentdiracslot", slot)
+    end,
+    -- Records WHICH SLOT the installer picked, and writes nothing. Selecting a
+    -- macro must never reach the unit -- running one is the action's job -- so
+    -- this handler exists purely so a later repopulation can keep the selection
+    -- on the same macro after the owner renames it on the unit. Composer
+    -- echoing the driver's own UpdatePropertyList back through here resolves to
+    -- the same slot, which is why the echo is harmless and needs no guard.
+    ["Macro"] = function(value)
+        DRIVER.macroSlot = resolveMacroByListedText(value)
     end,
 }
 

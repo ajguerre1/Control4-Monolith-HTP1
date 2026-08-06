@@ -15,9 +15,12 @@ local DEFAULTS = {
     ["Maximum Volume"] = "Unit maximum", ["Volume Ramp Rate"] = "100 ms",
     ["Power Off Action"] = "Standby",
     ["Debug Mode"] = "Off",
-    -- Both DYNAMIC_LISTs start empty, as Composer has them before the driver
-    -- has read anything from the unit.
-    ["Dirac Filter"] = "", ["Macro"] = "",
+    -- What Composer has before the driver has read anything from the unit:
+    -- each DYNAMIC_LIST's declared <default> in driver.xml. Dirac Filter has
+    -- none, so it starts empty; Macro defaults to its own sentinel, so an
+    -- install that has never seen the unit reads the same as one whose chosen
+    -- macro was deleted. tests/test_manifest.lua pins both against driver.xml.
+    ["Dirac Filter"] = "", ["Macro"] = "(none)",
 }
 
 local function loadDriver(overrides, bindingAddress)
@@ -1072,6 +1075,47 @@ return {
         end,
     },
     {
+        name = "a renamed Dirac slot keeps the selection on the same slot, not on the same text",
+        fn = function()
+            -- The Dirac picker's counterpart to the Macro sentinel, and the
+            -- reason it needs no sentinel of its own: this selection is not a
+            -- stored choice but a mirror of /cal/currentdiracslot, so it is
+            -- keyed on the SLOT INDEX. Renaming the selected slot moves its
+            -- label and nothing else. The six slots are fixed and cannot be
+            -- deleted, so "the selection vanished" has no analogue here.
+            loadDriver()
+            goLive()   -- wire slot 0, "Calibrated", is current
+            mock.clearCalls()
+            pushUpdate("/cal/slots", {
+                { name = "Reference" }, { name = "Flat" }, { name = "" },
+                { name = "Movie" }, { name = "Music" }, { name = "Custom" },
+            })
+            local last = lastPropertyList("Dirac Filter")
+            H.isTrue(last ~= nil, "the rename should reach Composer")
+            H.equal(last.args[3], "0 - Reference",
+                "still wire slot 0 -- the selection follows the slot, not the old label")
+            H.equal(lastWrittenOps(), nil, "and a rename must never turn into a write")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "an out-of-range current slot selects nothing rather than another filter",
+        fn = function()
+            -- If the unit ever reports a slot this driver has no row for, the
+            -- honest answer is no selection. Falling back to slot 0 would show
+            -- a filter that is not the one running.
+            loadDriver()
+            goLive()
+            mock.clearCalls()
+            pushUpdate("/cal/currentdiracslot", 9)
+            local last = lastPropertyList("Dirac Filter")
+            H.isTrue(last ~= nil, "the property is still repopulated")
+            H.equal(last.args[3], "",
+                "nothing selected, NOT '0 - Calibrated'")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
         name = "selecting a Dirac Filter entry writes the matching integer slot",
         fn = function()
             loadDriver()
@@ -1157,11 +1201,12 @@ return {
             goLive()
             local last = lastPropertyList("Macro")
             H.isTrue(last ~= nil, "the property should be populated from the first document")
-            H.equal(last.args[2], "Movie Night,Listening,cmdd,Preset 1,cmdcustom1",
+            H.equal(last.args[2], "(none),Movie Night,Listening,cmdd,Preset 1,cmdcustom1",
                 "in slot order, with the slot key standing in where the owner named nothing")
-            H.equal(last.args[3], "Movie Night",
-                "the first entry, since nothing had been selected before")
-            H.equal(Properties["Macro"], "Movie Night")
+            H.equal(last.args[3], "(none)",
+                "nothing had been selected before, so nothing is selected now -- the driver " ..
+                "must not decide on the installer's behalf which macro their action runs")
+            H.equal(Properties["Macro"], "(none)")
             H.assertNoErrorLog()
         end,
     },
@@ -1183,11 +1228,142 @@ return {
     {
         name = "the Macro property is left alone when the unit reports no macros at all",
         fn = function()
+            -- Nothing to say: the unit never mentioned macros, so there is no
+            -- change to report and no repopulation. driver.xml already defaults
+            -- the property to "(none)", so what Composer shows is still right.
             loadDriver()
             local F = require("tests.fixtures")
             goLiveWith(F.legacy())   -- no /svronly block at all
             H.equal(lastPropertyList("Macro"), nil,
-                "an empty list is worse than leaving Composer showing what it had")
+                "no macros reported and none had, so there is nothing to repopulate")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "deleting the last macro leaves the list holding only (none)",
+        fn = function()
+            -- The one case that must not leave a stale list standing: every
+            -- macro is gone, so every entry Composer still shows would run
+            -- something the unit no longer has.
+            loadDriver()
+            goLive()
+            Properties["Macro"] = "Movie Night"
+            local F = require("tests.fixtures")
+            local doc = F.modern()
+            doc.svronly = { macroNames = {} }
+
+            mock.clearCalls()
+            sendFrame("mso " .. JSON:encode(doc))
+            local last = lastPropertyList("Macro")
+            H.isTrue(last ~= nil, "the picker must be emptied, not left stale")
+            H.equal(last.args[2], "(none)", "the sentinel is the whole list")
+            H.equal(last.args[3], "(none)")
+
+            mock.clearCalls()
+            ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
+            mock.advance(50)
+            H.equal(changeMsoCount(), 0, "and there is nothing left to run")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "a macro the owner named (none) is listed under its slot key, not as the sentinel",
+        fn = function()
+            -- The collision case, and the reason it must not be left to resolve
+            -- by luck: an entry whose text equals the sentinel is a row the
+            -- picker cannot tell from "nothing selected". Listed under its slot
+            -- key it stays visible, selectable and runnable.
+            loadDriver()
+            local F = require("tests.fixtures")
+            local doc = F.modern()
+            doc.svronly.macroNames.preset1 = "(none)"
+            goLiveWith(doc)
+
+            local last = lastPropertyList("Macro")
+            H.equal(last.args[2], "(none),Movie Night,Listening,cmdd,preset1,cmdcustom1",
+                "one sentinel only -- preset1 appears under its key, not as a second '(none)'")
+
+            -- And it stays runnable, by the text shown and by its slot key --
+            -- both being "preset1" here, which is the point of the fallback.
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "preset1" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 1, "the macro must still be reachable")
+            H.equal(ops[1].path, "/upmix/select")
+
+            -- But the sentinel itself never resolves, even though this unit has
+            -- a macro whose REAL name is "(none)" -- Run Macro matches raw
+            -- names as well as displayed text, so without its guard this
+            -- request would run preset1.
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "(none)" })
+            mock.advance(50)
+            H.equal(changeMsoCount(), 0, "'(none)' means nothing, never a macro named that")
+            H.equal(lastWrittenOps(), nil)
+
+            -- Same through the action, which reads the property.
+            mock.clearCalls()
+            Properties["Macro"] = "(none)"
+            ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
+            mock.advance(50)
+            H.equal(changeMsoCount(), 0)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "deleting the selected macro cannot start running one the owner named (none)",
+        fn = function()
+            -- The exact failure the sentinel exists to prevent, with the one
+            -- name that could defeat it. Without the resolver guards this ran
+            -- preset1's operations after cmda was deleted.
+            loadDriver()
+            local F = require("tests.fixtures")
+            local doc = F.modern()
+            doc.svronly.macroNames.preset1 = "(none)"
+            goLiveWith(doc)
+            Properties["Macro"] = "Movie Night"       -- cmda
+            OnPropertyChanged("Macro")
+
+            local gone = F.modern()
+            gone.svronly.macroNames.preset1 = "(none)"
+            gone.svronly.cmda = nil
+            gone.svronly.macroNames.cmda = nil
+            mock.clearCalls()
+            sendFrame("mso " .. JSON:encode(gone))
+            H.equal(lastPropertyList("Macro").args[3], "(none)")
+
+            mock.clearCalls()
+            ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
+            mock.advance(50)
+            H.equal(changeMsoCount(), 0,
+                "deleting a macro must not start running a DIFFERENT one named (none)")
+            H.equal(lastWrittenOps(), nil)
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "renaming the selected macro on the unit keeps it selected",
+        fn = function()
+            -- The selection is the installer's choice of MACRO, not of a string.
+            -- Dropping it on a rename would leave their Run Selected Macro
+            -- programming doing nothing, with nothing to say why.
+            loadDriver()
+            goLive()
+            Properties["Macro"] = "Movie Night"       -- cmda
+            OnPropertyChanged("Macro")
+
+            mock.clearCalls()
+            pushUpdate("/svronly/macroNames/cmda", "Film Night")
+            local last = lastPropertyList("Macro")
+            H.equal(last.args[2], "(none),Film Night,Listening,cmdd,Preset 1,cmdcustom1")
+            H.equal(last.args[3], "Film Night", "still cmda, under its new name")
+
+            mock.clearCalls()
+            ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
+            mock.advance(50)
+            local ops = lastWrittenOps()
+            H.count(ops, 2, "and the action still runs cmda")
             H.assertNoErrorLog()
         end,
     },
@@ -1195,7 +1371,8 @@ return {
         name = "Run Selected Macro replays the stored operations as one changemso",
         fn = function()
             loadDriver()
-            goLive()   -- selects the first entry, "Movie Night" (cmda)
+            goLive()
+            Properties["Macro"] = "Movie Night"   -- the installer picking cmda
             mock.clearCalls()
             ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
             mock.advance(50)
@@ -1428,22 +1605,38 @@ return {
         fn = function()
             loadDriver({ ["Debug Mode"] = "On" })
             goLive()
-            for _, request in ipairs({ "Nothing By That Name", "" }) do
+            mock.clearCalls()
+            ExecuteCommand("Run Macro", { Macro = "Nothing By That Name" })
+            mock.advance(50)
+            H.equal(changeMsoCount(), 0, "an unknown name should have sent nothing")
+            H.isTrue(loggedContaining("no macro named"), "and should have been explained")
+
+            -- An empty request and the "(none)" entry are a DIFFERENT case from
+            -- a name that matched nothing: nothing was asked for, rather than
+            -- something being asked for and missing. Saying "no macro named"
+            -- there would send an installer looking for a macro they never
+            -- named, so the two are worded apart.
+            for _, request in ipairs({ "", "(none)" }) do
                 mock.clearCalls()
                 ExecuteCommand("Run Macro", { Macro = request })
                 mock.advance(50)
                 H.equal(changeMsoCount(), 0, "'" .. request .. "' should have sent nothing")
-                H.isTrue(loggedContaining("no macro named"),
-                    "'" .. request .. "' should have been explained")
+                H.isTrue(loggedContaining("no macro was given"),
+                    "'" .. request .. "' is a command parameter, not a selection")
             end
 
-            -- The action has the same problem when nothing is selected yet.
-            mock.clearCalls()
-            Properties["Macro"] = ""
-            ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
-            mock.advance(50)
-            H.equal(changeMsoCount(), 0)
-            H.isTrue(loggedContaining("no macro named"))
+            -- The action reads the property instead, so its wording differs.
+            -- "" as well as the sentinel: an install that upgrades from an
+            -- earlier version carries Composer's stored empty value across.
+            for _, selection in ipairs({ "(none)", "" }) do
+                mock.clearCalls()
+                Properties["Macro"] = selection
+                ExecuteCommand("LUA_ACTION", { ACTION = "RUN_SELECTED_MACRO" })
+                mock.advance(50)
+                H.equal(changeMsoCount(), 0, "'" .. selection .. "' should have sent nothing")
+                H.isTrue(loggedContaining("no macro is selected"),
+                    "'" .. selection .. "' should have said nothing was selected")
+            end
             H.assertNoErrorLog()
         end,
     },
@@ -1475,7 +1668,7 @@ return {
 
             local last = lastPropertyList("Macro")
             H.isTrue(last ~= nil, "the unit's rename should reach Composer")
-            H.equal(last.args[2], "Movie Night,Evening,cmdd,Preset 1,cmdcustom1")
+            H.equal(last.args[2], "(none),Movie Night,Evening,cmdd,Preset 1,cmdcustom1")
             H.equal(last.args[3], "Preset 1",
                 "the installer's selection survives a repopulation")
             H.equal(lastWrittenOps(), nil, "a push must never turn into a write")
@@ -1490,6 +1683,7 @@ return {
             -- owner's old operations on the wire long after they removed them.
             loadDriver()
             goLive()
+            Properties["Macro"] = "Movie Night"   -- the installer's own choice, cmda
             local F = require("tests.fixtures")
             local doc = F.modern()
             doc.svronly.cmda = nil
@@ -1499,7 +1693,11 @@ return {
             sendFrame("mso " .. JSON:encode(doc))
             local last = lastPropertyList("Macro")
             H.isTrue(last ~= nil, "the picker has to lose the entry")
-            H.equal(last.args[2], "Listening,cmdd,Preset 1,cmdcustom1")
+            H.equal(last.args[2], "(none),Listening,cmdd,Preset 1,cmdcustom1")
+            H.equal(last.args[3], "(none)",
+                "the selection must fall to nothing, NEVER to whichever macro now happens " ..
+                "to be first -- an action that quietly starts running a different macro is " ..
+                "worse than one that runs nothing")
 
             mock.clearCalls()
             ExecuteCommand("Run Macro", { Macro = "Movie Night" })
@@ -1521,7 +1719,8 @@ return {
             }))
             local last = lastPropertyList("Macro")
             H.isTrue(last ~= nil, "gaining operations puts a named slot into the list")
-            H.equal(last.args[2], "Movie Night,Listening,Late Night,cmdd,Preset 1,cmdcustom1")
+            H.equal(last.args[2],
+                "(none),Movie Night,Listening,Late Night,cmdd,Preset 1,cmdcustom1")
 
             mock.clearCalls()
             ExecuteCommand("Run Macro", { Macro = "Late Night" })
