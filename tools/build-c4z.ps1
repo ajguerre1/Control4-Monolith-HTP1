@@ -58,6 +58,18 @@ $payload = @(
     # Rendered in Composer's Documentation tab; declared by
     # <documentation> in driver.xml, and pinned by tests/test_manifest.lua.
     'www/documentation/index.html'
+    # Icons. Composer's System Design tree reads the first two; the rest are the
+    # Navigator ladder. Every path here is declared in driver.xml relative to
+    # www/, and tests/test_manifest.lua checks both directions -- declared but
+    # unpackaged ships a driver with no icon, packaged but undeclared is dead
+    # weight in the archive. Regenerate with tools/make-icons.py.
+    'www/icons/device_sm.png'
+    'www/icons/device_lg.png'
+    'www/icons/device/experience_70.png'
+    'www/icons/device/experience_90.png'
+    'www/icons/device/experience_300.png'
+    'www/icons/device/experience_512.png'
+    'www/icons/device/experience_1024.png'
 )
 
 function Get-SourcePath([string]$entry) {

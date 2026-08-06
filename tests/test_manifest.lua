@@ -12,6 +12,18 @@ local function readManifest()
     return text
 end
 
+-- The documentation page, read from the path driver.xml declares rather than a
+-- path repeated here -- so moving the file cannot leave a test reading a stale
+-- copy while Composer renders a different one.
+local function readDocumentation()
+    local file = readManifest():match('<documentation%s+file%s*=%s*"([^"]+)"')
+    assert(file, "driver.xml should declare a documentation file")
+    local handle = assert(io.open(file, "r"), "declared but missing on disk: " .. file)
+    local text = handle:read("*a")
+    handle:close()
+    return text
+end
+
 -- Returns { [id] = { name = ..., type = ..., raw = ... } } for every <connection>.
 local function parseConnections(xml)
     local connections = {}
@@ -102,6 +114,157 @@ return {
             H.isTrue(block ~= nil, "an explicit roomAutoBind override should be present")
             H.equal(block:match("^%s*$") ~= nil, true,
                 "it must be empty; found: " .. tostring(block))
+        end,
+    },
+    {
+        name = "every declared icon exists, is a PNG, and is the size it claims to be",
+        fn = function()
+            -- Composer and Navigator both fail SILENTLY on a bad icon: a missing
+            -- file or a mismatched size just falls back to the stock receiver
+            -- image, with nothing in any log. So the check has to be here.
+            --
+            -- Paths in driver.xml are relative to www/ inside the archive, which
+            -- is the part that is easy to get wrong -- "icons/device_sm.png"
+            -- means www/icons/device_sm.png, not icons/device_sm.png.
+            local xml = readManifest()
+            local declared = {}
+
+            for path in xml:gmatch('_image="([^"]+)"') do declared[path] = true end
+            for path in xml:gmatch('<small image_source="c4z">([^<]+)</small>') do
+                declared[path] = true
+            end
+            for path in xml:gmatch('<large image_source="c4z">([^<]+)</large>') do
+                declared[path] = true
+            end
+            H.isTrue(next(declared) ~= nil, "the driver should declare Composer icons")
+
+            -- The Navigator ladder carries its size in the element, so each one
+            -- asserts against what it itself claims rather than a list here.
+            local expected = {
+                ["icons/device_sm.png"] = 16,
+                ["icons/device_lg.png"] = 32,
+            }
+            for w, h, uri in xml:gmatch('<Icon width="(%d+)"%s+height="(%d+)">([^<]+)</Icon>') do
+                H.equal(w, h, "Navigator icons are square")
+                local path = uri:match("^controller://driver/[^/]+/(.+)$")
+                H.isTrue(path ~= nil, "unparseable icon URI: " .. uri)
+                declared[path] = true
+                expected[path] = tonumber(w)
+            end
+
+            for path in pairs(declared) do
+                local file = "www/" .. path
+                local handle = io.open(file, "rb")
+                H.isTrue(handle ~= nil, "declared but missing on disk: " .. file)
+                local header = handle:read(24)
+                handle:close()
+
+                H.equal(header:sub(2, 4), "PNG", file .. " should be a PNG")
+                -- IHDR carries width and height as big-endian 32-bit at byte 17.
+                local function be32(at)
+                    local n = 0
+                    for i = at, at + 3 do n = n * 256 + header:byte(i) end
+                    return n
+                end
+                local width, height = be32(17), be32(21)
+                H.equal(width, height, file .. " should be square")
+                if expected[path] then
+                    H.equal(width, expected[path], file .. " is the wrong size")
+                end
+            end
+        end,
+    },
+    {
+        name = "the controller:// icon paths name the archive this build produces",
+        fn = function()
+            -- The segment after controller://driver/ must be the .c4z file name
+            -- without its extension, matched case-sensitively -- that is how the
+            -- controller finds the driver's own web root. Building under a
+            -- different name would break every Navigator icon at once, and the
+            -- archive name is already load-bearing for a second reason: Composer
+            -- identifies a driver by file name, so a rename installs a second
+            -- driver rather than updating this one.
+            local build = io.open("tools/build-c4z.ps1", "r")
+            H.isTrue(build ~= nil, "the build script should exist")
+            local script = build:read("*a")
+            build:close()
+
+            local archive = script:match("([%w%.%-_]+)%.c4z")
+            H.isTrue(archive ~= nil, "could not find the archive name in the build script")
+            H.equal(archive:find(" ", 1, true), nil,
+                "a space in the archive name arrives URL-encoded and does not resolve")
+
+            local seen = 0
+            for uri in readManifest():gmatch('>(controller://driver/[^<]+)<') do
+                local base = uri:match("^controller://driver/([^/]+)/")
+                H.equal(base, archive, "icon URI names a different archive: " .. uri)
+                seen = seen + 1
+            end
+            H.isTrue(seen > 0, "no controller:// icon URIs found to check")
+        end,
+    },
+    {
+        name = "every packaged icon is declared, and every declared icon is packaged",
+        fn = function()
+            -- Both directions. Declared-but-unpackaged ships a driver with no
+            -- icon; packaged-but-undeclared is dead weight nobody will notice.
+            local build = io.open("tools/build-c4z.ps1", "r")
+            local script = build:read("*a")
+            build:close()
+
+            local packaged = {}
+            for path in script:gmatch("'(www/icons/[^']+)'") do packaged[path] = true end
+            H.isTrue(next(packaged) ~= nil, "the build should package the icons")
+
+            local xml = readManifest()
+            local declared = {}
+            for path in xml:gmatch('_image="([^"]+)"') do declared["www/" .. path] = true end
+            for path in xml:gmatch('image_source="c4z">([^<]+)<') do
+                declared["www/" .. path] = true
+            end
+            for uri in xml:gmatch('>(controller://driver/[^<]+)<') do
+                local path = uri:match("^controller://driver/[^/]+/(.+)$")
+                if path then declared["www/" .. path] = true end
+            end
+
+            for path in pairs(declared) do
+                H.isTrue(packaged[path], "declared in driver.xml but not packaged: " .. path)
+            end
+            for path in pairs(packaged) do
+                H.isTrue(declared[path], "packaged but not declared in driver.xml: " .. path)
+            end
+        end,
+    },
+    {
+        name = "the documentation states the driver version driver.xml declares",
+        fn = function()
+            -- These drifted once: the page said 104 for a 105 build. A version
+            -- an installer reads off the documentation and quotes in a support
+            -- conversation has to be the version they actually have, so the
+            -- two are pinned together rather than kept in step by hand.
+            local version = readManifest():match("<version>(%d+)</version>")
+            H.isTrue(version ~= nil, "driver.xml should declare a version")
+
+            local doc = readDocumentation()
+            H.isTrue(doc:find("Driver " .. version, 1, true) ~= nil,
+                "the documentation header should read 'Driver " .. version .. "'")
+
+            -- And the changelog has to carry an entry for it, so a release
+            -- cannot ship with its own changes undescribed.
+            H.isTrue(doc:find("(driver " .. version .. ")", 1, true) ~= nil,
+                "the changelog should have an entry for driver " .. version)
+        end,
+    },
+    {
+        name = "every shipped driver version has a changelog entry",
+        fn = function()
+            -- One entry per release, oldest to newest. A gap here means a
+            -- version shipped whose changes nobody wrote down.
+            local doc = readDocumentation()
+            for v = 100, tonumber(readManifest():match("<version>(%d+)</version>")) do
+                H.isTrue(doc:find("(driver " .. v .. ")", 1, true) ~= nil,
+                    "no changelog entry for driver " .. v)
+            end
         end,
     },
     {
