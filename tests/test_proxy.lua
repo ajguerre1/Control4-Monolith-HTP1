@@ -35,7 +35,7 @@ local function build(overrides)
         state = state, session = session, log = log,
         maxVolumeDb = (overrides or {}).maxVolumeDb,
         rampMs = (overrides or {}).rampMs or 100,
-        powerOffAction = (overrides or {}).powerOffAction or "Standby",
+        powerOffAction = (overrides or {}).powerOffAction or "Sleep",
     })
     session:start(); session:onOpen()
     session:onMessage("mso " .. JSON:encode(F.modern()))

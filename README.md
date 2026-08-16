@@ -8,7 +8,7 @@ Working on real hardware. The current version is on the [releases page](../../re
 
 ## Features
 
-- Power on, standby and sleep
+- Power on and sleep
 - Input selection across all 20 inputs, under the names the unit gives them
 - Volume, hold-to-ramp, and mute
 - Loudness from the room's own control
@@ -17,6 +17,7 @@ Working on real hardware. The current version is on the [releases page](../../re
 - Night mode, dialog enhancement, bass enhancement and lip sync delay
 - Runs the macros already stored on the unit
 - Status for programming: input, volume, formats, sample rates and video
+- Reports the unit's Fast Start setting
 - Events for connection, power, input and surround mode changes
 - Reconnects on its own after a network drop or a unit restart
 - Built-in documentation, in Composer's Documentation tab

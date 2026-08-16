@@ -284,6 +284,13 @@ Whether the unit keeps its network stack alive when `powerIsOn` is false. Both u
 supervised session. If it turns out Fast Start is required for `ON` to work, that becomes a documented
 prerequisite and the driver warns when the unit reports it off.
 
+**RESOLVED (v1.0.10, confirmed on hardware).** It does NOT. `/powerAction "off"` is the
+unit's SHUTDOWN and takes the network interface down with it, so no `ON` command and no
+Wake-on-LAN can reach it. `/powerAction "sleep"` is the recoverable standby and is the only
+power-down the driver offers; the `Standby` option that sent `"off"` was removed. `fastStart`
+is now surfaced as a read-only property.
+
+
 ## Non-Functional Requirements
 
 **Noise and resource usage.** Steady state is one open TCP socket, one 38 KB read at connect, and a

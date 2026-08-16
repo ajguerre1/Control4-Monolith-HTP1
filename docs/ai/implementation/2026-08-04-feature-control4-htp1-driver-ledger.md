@@ -99,3 +99,9 @@ STILL OPEN: whether the unit keeps its network stack alive with powerIsOn false;
 keep_connection makes Director re-establish the socket behind the driver's state machine, and how
 that interacts with the connect watchdog; long-run reconnection across unit reboot, network drop and
 controller restart over days.
+
+
+RESOLVED (v1.0.10, on hardware): whether the unit keeps its network stack alive with
+powerIsOn false. It does NOT under /powerAction "off" (SHUTDOWN) -- the network interface
+goes down with the unit and nothing can wake it. /powerAction "sleep" keeps it reachable and
+is now the only power-down the driver offers; the Standby option was removed.

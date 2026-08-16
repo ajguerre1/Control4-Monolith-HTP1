@@ -5422,6 +5422,13 @@ M1 is done when all of the following are true and the evidence is pasted into
 - Whether the unit keeps its network stack alive with `powerIsOn` false. Both units report
   `fastStart: "on"`, which suggests yes. If not, `ON` cannot work over IP and the driver needs
   Wake-on-LAN — record the answer in the implementation doc either way.
+
+**RESOLVED (v1.0.10, confirmed on hardware).** It does NOT. `/powerAction "off"` is the
+unit's SHUTDOWN and takes the network interface down with it, so no `ON` command and no
+Wake-on-LAN can reach it. `/powerAction "sleep"` is the recoverable standby and is the only
+power-down the driver offers; the `Standby` option that sent `"off"` was removed. `fastStart`
+is now surfaced as a read-only property.
+
 - Whether `C4:GetBindingAddress` returns the address in the form the `Host` header wants.
 - Whether the unit ever fragments the 38 KB `mso` frame in practice, or always sends it whole.
 

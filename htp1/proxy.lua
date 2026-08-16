@@ -16,7 +16,7 @@ function Proxy.new(opts)
         log      = opts.log,
         maxVolumeDb    = opts.maxVolumeDb,
         rampMs         = opts.rampMs or 100,
-        powerOffAction = opts.powerOffAction or "Standby",
+        powerOffAction = opts.powerOffAction or "Sleep",
         rampTimer      = nil,
     }, Proxy)
 end
