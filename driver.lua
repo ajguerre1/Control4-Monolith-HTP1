@@ -257,6 +257,24 @@ end
 -- changed" are the same call. Called from onChanges below whenever
 -- changes.diracSlots or changes.diracSlot fires -- which includes the first
 -- document, since both start out empty/nil.
+-- The unit's Fast Start setting, shown as a read-only property.
+--
+-- Reported only, never set: whether the unit wakes quickly is a unit setting,
+-- and a room control has no business changing it. Shown because it is the
+-- difference between an ON command taking a moment and taking the better part
+-- of a minute.
+--
+-- Empty until the unit has been read, like every other unknown in this driver:
+-- "Off" would be a determinate answer to a question nobody can answer yet.
+local function updateFastStartProperty()
+    local value = DRIVER.state.fields.fastStart
+    if value == nil then
+        C4:UpdateProperty("Fast Start", "")
+        return
+    end
+    C4:UpdateProperty("Fast Start", value == "on" and "On" or "Off")
+end
+
 local function updateDiracFilterProperty()
     local items, selectedText = diracFilterItems()
     if #items == 0 then return end -- nothing reported yet; leave the property alone
@@ -603,6 +621,7 @@ function DRIVER.onConnected(connected)
     C4:UpdateProperty("System Software Version", DRIVER.state.fields.systemVersion or "")
     C4:UpdateProperty("AV Controller Version", DRIVER.state.fields.avControllerVersion or "")
     C4:UpdateProperty("Serial Number", DRIVER.state.fields.serial or "")
+    updateFastStartProperty()
     DRIVER.proxy:announce()
 end
 
@@ -632,6 +651,7 @@ function DRIVER.onChanges(changes)
     -- lists, and a fault repopulating one must not be able to stop the other.
     guard("macro property", function()
         if changes.macros then updateMacroProperty() end
+        if changes.fastStart then updateFastStartProperty() end
     end)
 end
 

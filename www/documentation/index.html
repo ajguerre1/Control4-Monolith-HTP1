@@ -55,7 +55,7 @@
 
 <h1>Monoprice Monolith HTP-1</h1>
 <p class="lede">Control4 driver for the HTP-1 AV processor.</p>
-<p class="meta">Driver 109 &middot; Control4 OS 3.x &middot; HTP-1 firmware 1.13.x or 2.1.x</p>
+<p class="meta">Driver 110 &middot; Control4 OS 3.x &middot; HTP-1 firmware 1.13.x or 2.1.x</p>
 
 <h2>What it does</h2>
 <div class="cols">
@@ -116,6 +116,9 @@
   <tr><td class="name">Serial Number</td><td>The unit's serial number.</td></tr>
   <tr><td class="name">Connection Status</td>
       <td><em>Connected</em>, or <em>Not connected</em> with the last failure.</td></tr>
+  <tr><td class="name">Fast Start</td>
+      <td><code>On</code> or <code>Off</code>, as set on the unit. With Fast Start off the unit
+          takes considerably longer to wake from sleep.</td></tr>
 </table>
 
 <h3>Settable</h3>
@@ -129,8 +132,9 @@
       <td class="mono">50 &hellip; 300 ms</td>
       <td>How fast the volume moves while a volume button is held.</td></tr>
   <tr><td class="name">Power Off Action</td>
-      <td class="mono">Standby<br>Sleep<br>Do Nothing</td>
-      <td>What happens when the room turns off. <em>Do Nothing</em> leaves the unit powered.</td></tr>
+      <td class="mono">Sleep<br>Do Nothing</td>
+      <td>What happens when the room turns off. <em>Sleep</em> puts the unit in standby, from which
+          Control4 can wake it. <em>Do Nothing</em> leaves it powered.</td></tr>
   <tr><td class="name">Debug Mode</td>
       <td class="mono">Off<br>On<br>On for 15 Minutes</td>
       <td>Writes detail to the Lua tab. <em>On for 15 Minutes</em> switches itself off.</td></tr>
@@ -142,6 +146,11 @@
       <td>Chooses which macro the <strong>Run Selected Macro</strong> action runs. Only slots holding
           something appear. Selecting one does not run it.</td></tr>
 </table>
+<div class="note">
+  <strong>The driver never fully shuts the unit down.</strong>
+  The unit's own SHUTDOWN turns its network off with it, and nothing on the network can wake it
+  again. Powering the room off puts the unit to sleep instead, which keeps it reachable.
+</div>
 <div class="note">
   <strong>Macros are run, not created.</strong>
   Macros are recorded on the unit itself. This driver lists them and runs them; it cannot add, edit,
@@ -271,6 +280,15 @@
 </table>
 
 <h2>Changelog</h2>
+
+<h3>1.0.10 &nbsp;<span class="meta">(driver 110)</span></h3>
+<ul>
+  <li><strong>Removed the <em>Standby</em> power-off option.</strong> It shut the unit down
+      completely, including its network, leaving nothing able to wake it. <strong>Power Off Action</strong>
+      now offers <em>Sleep</em> and <em>Do Nothing</em>, and defaults to <em>Sleep</em>.
+      Installations still set to <em>Standby</em> sleep the unit instead.</li>
+  <li>Added the <strong>Fast Start</strong> property, showing the unit's Fast Start setting.</li>
+</ul>
 
 <h3>1.0.9 &nbsp;<span class="meta">(driver 109)</span></h3>
 <ul><li>Documentation rewritten.</li></ul>

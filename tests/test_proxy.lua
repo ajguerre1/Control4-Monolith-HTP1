@@ -74,18 +74,35 @@ return {
         end,
     },
     {
-        name = "OFF uses the configured power-off action",
+        name = "OFF sleeps the unit",
         fn = function()
-            local proxy, _, transport = build({ powerOffAction = "Standby" })
+            local proxy, _, transport = build({ powerOffAction = "Sleep" })
             proxy:handle(BINDING, "OFF", {})
             mock.advance(50)
             H.equal(lastOps(transport)[1].path, "/powerAction")
-            H.equal(lastOps(transport)[1].value, "off")
-
-            local sleepProxy, _, sleepTransport = build({ powerOffAction = "Sleep" })
-            sleepProxy:handle(BINDING, "OFF", {})
-            mock.advance(50)
-            H.equal(lastOps(sleepTransport)[1].value, "sleep")
+            H.equal(lastOps(transport)[1].value, "sleep")
+        end,
+    },
+    {
+        name = "OFF never sends the unit's shutdown, whatever the property says",
+        fn = function()
+            -- /powerAction "off" is SHUTDOWN: it takes the unit's network
+            -- interface down with it, so no ON command from anywhere can wake
+            -- it again. A room turning off must never be able to do that.
+            --
+            -- "Standby" is the case that matters: it was a real option in
+            -- earlier versions and sent exactly that. Composer keeps a stored
+            -- property value across a driver update, so a driver updated from
+            -- v1.0.9 or earlier still reads "Standby" here.
+            for _, stored in ipairs({ "Standby", "standby", "Off", "", "Anything Else" }) do
+                local proxy, _, transport = build({ powerOffAction = stored })
+                proxy:handle(BINDING, "OFF", {})
+                mock.advance(50)
+                local ops = lastOps(transport)
+                H.equal(ops[1].path, "/powerAction", "'" .. stored .. "'")
+                H.equal(ops[1].value, "sleep",
+                    "'" .. stored .. "' must sleep, never shut the unit down")
+            end
         end,
     },
     {

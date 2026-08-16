@@ -27,6 +27,9 @@ local SCALAR_PATHS = {
     ["/cal/currentdiracslot"]       = "diracSlot",
     ["/cal/lipsync"]                = "lipSync",
     ["/unitname"]                   = "unitName",
+    -- Whether the unit wakes quickly from sleep. Read-only here: turning it on
+    -- and off belongs to the unit's own settings, not to a room control.
+    ["/fastStart"]                  = "fastStart",
     ["/versions/avController"]      = "avControllerVersion",
     ["/versions/swVer"]             = "systemVersion",
     ["/versions/SerialNumber"]      = "serial",

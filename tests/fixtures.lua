@@ -117,6 +117,7 @@ function F.modern()
                      SerialNumber = "0001" },
         channeltrim = {}, dialnorm = 0, shaker = {}, secondaryVolume = -40,
         loudness = "off", night = "off", dialogEnh = 3, bassenhance = "off",
+        fastStart = "on",
         status = {
             SurroundMode = "Native Dolby ATMOS",
             DECSourceProgram = "Dolby MAT/PCM",
@@ -171,6 +172,7 @@ function F.legacy()
                      SerialNumber = "0002" },
         secondVolume = -40, vu = {},
         loudness = "off", night = "off", dialogEnh = 3, bassenhance = "off",
+        fastStart = "off",
         status = {
             SurroundMode = "Dolby Surround",
             DECSourceProgram = "PCM",

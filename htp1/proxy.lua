@@ -110,6 +110,16 @@ function COMMANDS.ON(self)
     self.session:write("/powerIsOn", true)
 end
 
+-- THE DRIVER NEVER SENDS /powerAction = "off", AND MUST NOT.
+--
+-- That is the unit's SHUTDOWN, and it takes the network interface down with
+-- it: the unit becomes unreachable and no ON command, from this driver or
+-- anything else on the network, can wake it. Powering the room off would
+-- therefore be a one-way trip requiring someone to walk to the unit.
+--
+-- "sleep" is the unit's own standby: the front panel goes dark, the network
+-- stack stays up, and /powerIsOn true brings it back. It is what the unit's
+-- web client sends for SLEEP, and the only power-down this driver offers.
 function COMMANDS.OFF(self)
     -- "Do Nothing" is for a processor that is meant to stay powered: a room
     -- turning off, or a stray program, should not be able to take the whole
@@ -118,7 +128,12 @@ function COMMANDS.OFF(self)
         self.log:debug("room off ignored: Power Off Action is Do Nothing")
         return
     end
-    self.session:write("/powerAction", self.powerOffAction == "Sleep" and "sleep" or "off")
+    -- Anything that is not "Do Nothing" sleeps, rather than testing for
+    -- "Sleep" and falling through to "off". Drivers updated from a version
+    -- that offered "Standby" still have that value stored in Composer, and
+    -- reading it literally would send the shutdown described above. Fail
+    -- towards the recoverable state, always.
+    self.session:write("/powerAction", "sleep")
 end
 
 function COMMANDS.SET_INPUT(self, params)

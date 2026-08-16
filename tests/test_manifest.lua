@@ -296,10 +296,18 @@ return {
             local xml = readManifest()
             local items = xml:match("<name>Power Off Action</name>.-<items>(.-)</items>")
             H.isTrue(items ~= nil, "the property should declare items")
-            for _, choice in ipairs({ "Standby", "Sleep", "Do Nothing" }) do
+            for _, choice in ipairs({ "Sleep", "Do Nothing" }) do
                 H.isTrue(items:find("<item>" .. choice .. "</item>", 1, true) ~= nil,
                     "missing choice: " .. choice)
             end
+
+            -- "Standby" sent /powerAction "off" -- the unit's SHUTDOWN, which
+            -- takes its network interface down and leaves nothing able to wake
+            -- it. Offering it at all is the defect; it must not come back.
+            H.equal(items:find("Standby", 1, true), nil,
+                "Standby powers the unit down past the reach of any ON command")
+            local default = xml:match("<name>Power Off Action</name>.-<default>(.-)</default>")
+            H.equal(default, "Sleep", "the default must be recoverable")
         end,
     },
     {

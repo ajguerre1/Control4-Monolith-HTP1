@@ -13,7 +13,8 @@ local DEFAULTS = {
     ["System Software Version"] = "", ["AV Controller Version"] = "",
     ["Serial Number"] = "", ["Connection Status"] = "Not connected",
     ["Maximum Volume"] = "Unit maximum", ["Volume Ramp Rate"] = "100 ms",
-    ["Power Off Action"] = "Standby",
+    ["Power Off Action"] = "Sleep",
+    ["Fast Start"] = "",
     ["Debug Mode"] = "Off",
     -- What Composer has before the driver has read anything from the unit:
     -- each DYNAMIC_LIST's declared <default> in driver.xml. Dirac Filter has
@@ -1207,6 +1208,34 @@ return {
                 "nothing had been selected before, so nothing is selected now -- the driver " ..
                 "must not decide on the installer's behalf which macro their action runs")
             H.equal(Properties["Macro"], "(none)")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Fast Start is reported from the unit, and follows a change on it",
+        fn = function()
+            loadDriver()
+            goLive()   -- F.modern(): fastStart "on"
+            H.equal(Properties["Fast Start"], "On")
+
+            mock.clearCalls()
+            pushUpdate("/fastStart", "off")
+            H.equal(Properties["Fast Start"], "Off", "a change on the unit reaches Composer")
+            H.equal(lastWrittenOps(), nil, "reading it must never turn into a write")
+            H.assertNoErrorLog()
+        end,
+    },
+    {
+        name = "Fast Start reads empty until the unit has been heard from",
+        fn = function()
+            -- Unknown is empty, like every other unread field. "Off" would be a
+            -- determinate answer to a question nobody can answer yet.
+            loadDriver()
+            H.equal(Properties["Fast Start"], "")
+
+            local F = require("tests.fixtures")
+            goLiveWith(F.legacy())   -- fastStart "off"
+            H.equal(Properties["Fast Start"], "Off")
             H.assertNoErrorLog()
         end,
     },
